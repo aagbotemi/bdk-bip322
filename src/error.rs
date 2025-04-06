@@ -1,10 +1,15 @@
+use alloc::string::String;
 use core::fmt;
 
 #[derive(Debug)]
-pub enum Error {}
+pub enum Error {
+    ExtractionError(String),
+}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Ok(())
+        match self {
+            Error::ExtractionError(e) => write!(f, "Unable to extract {}", e),
+        }
     }
 }

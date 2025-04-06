@@ -1,7 +1,15 @@
-use alloc::vec;
+use alloc::{string::ToString, vec};
+
 use bitcoin::{
-    absolute::LockTime, hashes::{sha256, Hash, HashEngine}, opcodes::OP_0, script::Builder, transaction::Version, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness
+    Amount, OutPoint, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    absolute::LockTime,
+    hashes::{Hash, HashEngine, sha256},
+    opcodes::{OP_0, all::OP_RETURN},
+    script::Builder,
+    transaction::Version,
 };
+
+use crate::Error;
 
 #[derive(Debug, PartialEq)]
 pub enum SignatureFormat {
@@ -50,4 +58,42 @@ pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
             script_pubkey: script_pubkey.clone(),
         }],
     }
+}
+
+pub fn to_sign(
+    script_pubkey: &ScriptBuf,
+    txid: Txid,
+    lock_time: LockTime,
+    sequence: Sequence,
+    witness: Option<Witness>,
+) -> Result<Psbt, Error> {
+    let outpoint = OutPoint { txid, vout: 0x00 };
+    let script_pub_key = Builder::new().push_opcode(OP_RETURN).into_script();
+
+    let tx = Transaction {
+        version: Version(0),
+        lock_time,
+        input: vec![TxIn {
+            previous_output: outpoint,
+            sequence,
+            script_sig: ScriptBuf::new(),
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: Amount::from_sat(0),
+            script_pubkey: script_pub_key,
+        }],
+    };
+
+    let mut psbt =
+        Psbt::from_unsigned_tx(tx).map_err(|_| Error::ExtractionError("psbt".to_string()))?;
+
+    psbt.inputs[0].witness_utxo = Some(TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: script_pubkey.clone(),
+    });
+
+    psbt.inputs[0].final_script_witness = witness;
+
+    Ok(psbt)
 }
