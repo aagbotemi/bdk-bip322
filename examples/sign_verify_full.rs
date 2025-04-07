@@ -65,7 +65,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let verifier = Verifier::new(address, signature, message, SignatureFormat::Simple, None);
     let verify = verifier.verify().unwrap();
 
-    assert!(!verify);
+    assert!(verify);
 
     Ok(())
 }
