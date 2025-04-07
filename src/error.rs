@@ -11,6 +11,8 @@ pub enum Error {
     UnsupportedType,
     InvalidPublicKey(String),
     SighashError,
+    Base64DecodeError,
+    InvalidSignature(String),
 }
 
 impl fmt::Display for Error {
@@ -24,6 +26,8 @@ impl fmt::Display for Error {
             Self::UnsupportedType => write!(f, "Type is not supported"),
             Self::InvalidPublicKey(e) => write!(f, "Invalid public key {}", e),
             Self::SighashError => write!(f, "Unable to compute signature hash"),
+            Self::Base64DecodeError => write!(f, "Base64 decoding failed"),
+            Self::InvalidSignature(e) => write!(f, "Invalid Signature - {}", e),
         }
     }
 }
