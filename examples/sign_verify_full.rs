@@ -57,12 +57,12 @@ async fn main() -> Result<(), anyhow::Error> {
         private_key_wif,
         message.clone(),
         address.clone(),
-        SignatureFormat::Simple,
+        SignatureFormat::Full,
         None,
     );
     let signature = signer.sign().unwrap();
 
-    let verifier = Verifier::new(address, signature, message, SignatureFormat::Simple, None);
+    let verifier = Verifier::new(address, signature, message, SignatureFormat::Full, None);
     let verify = verifier.verify().unwrap();
 
     assert!(verify);
