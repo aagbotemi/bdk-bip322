@@ -6,13 +6,13 @@ use alloc::{
 use bitcoin::{
     Address, EcdsaSighashType, OutPoint, PrivateKey, ScriptBuf, Sequence, Witness,
     base64::{Engine, prelude::BASE64_STANDARD},
-    secp256k1::{Message, ecdsa::Signature as EcdsaSignature},
+    secp256k1::{Message, ecdsa::Signature},
     sign_message::signed_msg_hash,
 };
 
 use crate::{Error, SecpCtx, SignatureFormat};
 
-pub struct Signature {
+pub struct Signer {
     private_key_str: String,
     message: String,
     address_str: String,
@@ -20,7 +20,7 @@ pub struct Signature {
     proof_of_funds: Option<Vec<(OutPoint, ScriptBuf, Witness, Sequence)>>,
 }
 
-impl Signature {
+impl Signer {
     pub fn new(
         private_key_str: String,
         message: String,
@@ -71,7 +71,7 @@ impl Signature {
         let message = &Message::from_digest_slice(message_hash.as_ref())
             .map_err(|_| Error::InvalidMessage)?;
 
-        let mut signature: EcdsaSignature = secp.sign_ecdsa(message, &private_key.inner);
+        let mut signature: Signature = secp.sign_ecdsa(message, &private_key.inner);
         signature.normalize_s();
         let mut sig_serialized = signature.serialize_der().to_vec();
         sig_serialized.push(EcdsaSighashType::All as u8);
