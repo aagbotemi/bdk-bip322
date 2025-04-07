@@ -1,8 +1,8 @@
 #![no_std]
 
+#[macro_use]
 pub extern crate alloc;
 
-#[macro_use]
 #[cfg(feature = "std")]
 extern crate std;
 

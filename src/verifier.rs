@@ -402,7 +402,7 @@ mod tests {
 
         let verify_message = legacy_verify.verify().unwrap();
 
-        assert_eq!(verify_message, false);
+        assert!(!verify_message);
     }
 
     #[test]
