@@ -2,6 +2,10 @@
 
 pub extern crate alloc;
 
+#[macro_use]
+#[cfg(feature = "std")]
+extern crate std;
+
 pub mod error;
 pub mod signer;
 pub mod utils;

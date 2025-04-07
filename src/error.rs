@@ -8,6 +8,9 @@ pub enum Error {
     InvalidAddress,
     InvalidFormat(String),
     InvalidMessage,
+    UnsupportedType,
+    InvalidPublicKey(String),
+    SighashError,
 }
 
 impl fmt::Display for Error {
@@ -18,6 +21,9 @@ impl fmt::Display for Error {
             Self::InvalidAddress => write!(f, "Invalid address"),
             Self::InvalidFormat(e) => write!(f, "Only valid for {} format", e),
             Self::InvalidMessage => write!(f, "Message hash is not secure"),
+            Self::UnsupportedType => write!(f, "Type is not supported"),
+            Self::InvalidPublicKey(e) => write!(f, "Invalid public key {}", e),
+            Self::SighashError => write!(f, "Unable to compute signature hash"),
         }
     }
 }
