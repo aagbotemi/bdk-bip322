@@ -70,7 +70,9 @@ impl Signer {
                 Ok(BASE64_STANDARD.encode(serialize(&witness.input[0].witness.clone())))
             }
             SignatureFormat::Full => {
-                todo!()
+                let transaction = self.sign_message(&private_key, pubkey, &script_pubkey)?;
+
+                Ok(BASE64_STANDARD.encode(serialize(&transaction)))
             }
         }
     }
