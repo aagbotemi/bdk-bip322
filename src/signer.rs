@@ -227,3 +227,42 @@ impl Signer {
         Ok(Witness::from(vec![sig_serialized]))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
+    const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
+    const HELLO_WORLD_MESSAGE: &str = "Hello World";
+
+    #[test]
+    fn test_sign_with_segwit_address() {
+        let simple_sign = Signer::new(
+            PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            SEGWIT_ADDRESS.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+        let sign_message = simple_sign.sign().unwrap();
+
+        let sign_empty_msg = Signer::new(
+            PRIVATE_KEY.to_string(),
+            "".to_string(),
+            SEGWIT_ADDRESS.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+        let sign_empty_msg_sig = sign_empty_msg.sign().unwrap();
+
+        assert_eq!(
+            sign_message,
+            "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+        );
+        assert_eq!(
+            sign_empty_msg_sig,
+            "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
+        );
+    }
+}
