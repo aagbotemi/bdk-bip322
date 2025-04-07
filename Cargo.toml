@@ -10,3 +10,8 @@ bitcoin = { version = "0.32.5", features = [ "base64" ], default-features = fals
 [features]
 default = ["std"]
 std = []
+
+[dev-dependencies]
+bdk_wallet = { version = "1.2.0", features = ["rusqlite"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+anyhow = "1"
