@@ -6,6 +6,7 @@ use bitcoin::{
     hashes::{Hash, HashEngine, sha256},
     opcodes::{OP_0, all::OP_RETURN},
     script::Builder,
+    secp256k1::{All, Secp256k1},
     transaction::Version,
 };
 
@@ -97,3 +98,5 @@ pub fn to_sign(
 
     Ok(psbt)
 }
+
+pub(crate) type SecpCtx = Secp256k1<All>;
