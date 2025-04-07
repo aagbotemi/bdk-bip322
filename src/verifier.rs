@@ -81,7 +81,11 @@ impl Verifier {
                 self.verify_message(address, to_sign_witness)
             }
             SignatureFormat::Full => {
-                todo!()
+                let mut cursor = Cursor::new(signature_bytes);
+                let transaction = Transaction::consensus_decode_from_finite_reader(&mut cursor)
+                    .map_err(|_| Error::DecodeError("transaction".to_string()))?;
+
+                self.verify_message(address, transaction)
             }
         }
     }
