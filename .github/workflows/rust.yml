@@ -30,7 +30,7 @@ jobs:
           cargo test --no-fail-fast --all-features
 
   fmt-clippy:
-    name: Rust clippy
+    name: Rust fmt & clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

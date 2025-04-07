@@ -4,20 +4,20 @@ use alloc::{
     vec::Vec,
 };
 use bitcoin::{
-    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, Psbt, PublicKey, ScriptBuf, Sequence,
-    TapSighashType, Transaction, TxIn, TxOut, Witness,
     absolute::LockTime,
-    base64::{Engine, prelude::BASE64_STANDARD},
+    base64::{prelude::BASE64_STANDARD, Engine},
     consensus::serialize,
     key::{Keypair, TapTweak},
     psbt::Input,
-    secp256k1::{Message, ecdsa::Signature},
+    secp256k1::{ecdsa::Signature, Message},
     sighash::{self, SighashCache},
     sign_message::signed_msg_hash,
     transaction::Version,
+    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, Psbt, PublicKey, ScriptBuf, Sequence,
+    TapSighashType, Transaction, TxIn, TxOut, Witness,
 };
 
-use crate::{Error, SecpCtx, SignatureFormat, to_sign, to_spend};
+use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 
 pub struct Signer {
     private_key_str: String,

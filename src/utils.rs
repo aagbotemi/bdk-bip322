@@ -1,13 +1,13 @@
 use alloc::{string::ToString, vec};
 
 use bitcoin::{
-    Amount, OutPoint, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
     absolute::LockTime,
-    hashes::{Hash, HashEngine, sha256},
-    opcodes::{OP_0, all::OP_RETURN},
+    hashes::{sha256, Hash, HashEngine},
+    opcodes::{all::OP_RETURN, OP_0},
     script::Builder,
     secp256k1::{All, Secp256k1},
     transaction::Version,
+    Amount, OutPoint, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 
 use crate::Error;

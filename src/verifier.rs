@@ -4,18 +4,18 @@ use alloc::{
 };
 
 use bitcoin::{
-    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, Psbt, PublicKey, ScriptBuf,
-    TapSighashType, Transaction, TxOut, Witness, WitnessVersion, XOnlyPublicKey,
-    base64::{Engine, prelude::BASE64_STANDARD},
+    base64::{prelude::BASE64_STANDARD, Engine},
     consensus::Decodable,
     io::Cursor,
     opcodes::all::OP_RETURN,
-    secp256k1::{Message, ecdsa::Signature, schnorr},
+    secp256k1::{ecdsa::Signature, schnorr, Message},
     sighash::{self, SighashCache},
     sign_message::signed_msg_hash,
+    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, Psbt, PublicKey, ScriptBuf,
+    TapSighashType, Transaction, TxOut, Witness, WitnessVersion, XOnlyPublicKey,
 };
 
-use crate::{Error, SecpCtx, SignatureFormat, to_sign, to_spend};
+use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 
 pub struct Verifier {
     address_str: String,
