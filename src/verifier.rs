@@ -308,3 +308,282 @@ impl Verifier {
         Ok(secp.verify_schnorr(&signature, msg, &pub_key).is_ok())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Signer;
+
+    // TEST VECTORS FROM
+    // https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#user-content-Test_vectors
+    // https://github.com/Peach2Peach/bip322-js/tree/main/test
+
+    const PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
+    const PRIVATE_KEY_TESTNET: &str = "cTrF79uahxMC7bQGWh2931vepWPWqS8KtF8EkqgWwv3KMGZNJ2yP";
+
+    const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
+    const SEGWIT_TESTNET_ADDRESS: &str = "tb1q9vza2e8x573nczrlzms0wvx3gsqjx7vaxwd45v";
+    const TAPROOT_ADDRESS: &str = "bc1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5sxq8lt3";
+    const TAPROOT_TESTNET_ADDRESS: &str =
+        "tb1ppv609nr0vr25u07u95waq5lucwfm6tde4nydujnu8npg4q75mr5s3g3s37";
+    const LEGACY_ADDRESS: &str = "14vV3aCHBeStb5bkenkNHbe2YAFinYdXgc";
+    const LEGACY_ADDRESS_TESTNET: &str = "mjSSLdHFzft9NC5NNMik7WrMQ9rRhMhNpT";
+
+    const HELLO_WORLD_MESSAGE: &str = "Hello World";
+
+    const NESTED_SEGWIT_PRIVATE_KEY: &str = "KwTbAxmBXjoZM3bzbXixEr9nxLhyYSM4vp2swet58i19bw9sqk5z";
+    const NESTED_SEGWIT_TESTNET_PRIVATE_KEY: &str =
+        "cMpadsm2xoVpWV5FywY5cAeraa1PCtSkzrBM45Ladpf9rgDu6cMz";
+    const NESTED_SEGWIT_ADDRESS: &str = "3HSVzEhCFuH9Z3wvoWTexy7BMVVp3PjS6f";
+    const NESTED_SEGWIT_TESTNET_ADDRESS: &str = "2N8zi3ydDsMnVkqaUUe5Xav6SZqhyqEduap";
+
+    #[test]
+    fn sign_and_verify_legacy_signature() {
+        let legacy_sign = Signer::new(
+            PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            LEGACY_ADDRESS.to_string(),
+            SignatureFormat::Legacy,
+            None,
+        );
+        let sign_message = legacy_sign.sign().unwrap();
+
+        let legacy_sign_testnet = Signer::new(
+            PRIVATE_KEY_TESTNET.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            LEGACY_ADDRESS_TESTNET.to_string(),
+            SignatureFormat::Legacy,
+            None,
+        );
+        let sign_message_testnet = legacy_sign_testnet.sign().unwrap();
+
+        let legacy_verify = Verifier::new(
+            LEGACY_ADDRESS.to_string(),
+            sign_message,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Legacy,
+            Some(PRIVATE_KEY.to_string()),
+        );
+
+        let verify_message = legacy_verify.verify().unwrap();
+
+        let legacy_verify_testnet = Verifier::new(
+            LEGACY_ADDRESS.to_string(),
+            sign_message_testnet,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Legacy,
+            Some(PRIVATE_KEY_TESTNET.to_string()),
+        );
+
+        let verify_message_testnet = legacy_verify_testnet.verify().unwrap();
+
+        assert!(verify_message);
+        assert!(verify_message_testnet);
+    }
+
+    #[test]
+    fn sign_and_verify_legacy_signature_with_wrong_message() {
+        let legacy_sign = Signer::new(
+            PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            LEGACY_ADDRESS.to_string(),
+            SignatureFormat::Legacy,
+            None,
+        );
+        let sign_message = legacy_sign.sign().unwrap();
+
+        let legacy_verify = Verifier::new(
+            LEGACY_ADDRESS.to_string(),
+            sign_message,
+            "".to_string(),
+            SignatureFormat::Legacy,
+            Some(PRIVATE_KEY.to_string()),
+        );
+
+        let verify_message = legacy_verify.verify().unwrap();
+
+        assert_eq!(verify_message, false);
+    }
+
+    #[test]
+    fn test_sign_and_verify_nested_segwit_address() {
+        let nested_segwit_simple_sign = Signer::new(
+            NESTED_SEGWIT_PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            NESTED_SEGWIT_ADDRESS.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+
+        let sign_message = nested_segwit_simple_sign.sign().unwrap();
+        assert_eq!(
+            sign_message.clone(),
+            "AkgwRQIhAMd2wZSY3x0V9Kr/NClochoTXcgDaGl3OObOR17yx3QQAiBVWxqNSS+CKen7bmJTG6YfJjsggQ4Fa2RHKgBKrdQQ+gEhAxa5UDdQCHSQHfKQv14ybcYm1C9y6b12xAuukWzSnS+w"
+        );
+
+        let nested_segwit_full_sign_testnet = Signer::new(
+            NESTED_SEGWIT_TESTNET_PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            NESTED_SEGWIT_TESTNET_ADDRESS.to_string(),
+            SignatureFormat::Full,
+            None,
+        );
+
+        let sign_message_testnet = nested_segwit_full_sign_testnet.sign().unwrap();
+        assert_eq!(
+            sign_message_testnet.clone(),
+            "AAAAAAABAVuR8vsJiiYj9+vO+8l7Ol3wt3Frz7SVyVSxn0ehOUb+AAAAAAAAAAAAAQAAAAAAAAAAAWoCSDBFAiEAx3bBlJjfHRX0qv80KWhyGhNdyANoaXc45s5HXvLHdBACIFVbGo1JL4Ip6ftuYlMbph8mOyCBDgVrZEcqAEqt1BD6ASEDFrlQN1AIdJAd8pC/XjJtxibUL3LpvXbEC66RbNKdL7AAAAAA"
+        );
+
+        let nested_segwit_full_verify = Verifier::new(
+            NESTED_SEGWIT_ADDRESS.to_string(),
+            sign_message,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+
+        let verify_message = nested_segwit_full_verify.verify().unwrap();
+
+        let nested_segwit_full_verify_testnet = Verifier::new(
+            NESTED_SEGWIT_TESTNET_ADDRESS.to_string(),
+            sign_message_testnet,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Full,
+            None,
+        );
+
+        let verify_message_testnet = nested_segwit_full_verify_testnet.verify().unwrap();
+
+        assert!(verify_message);
+        assert!(verify_message_testnet);
+    }
+
+    #[test]
+    fn test_sign_and_verify_segwit_address() {
+        let full_sign = Signer::new(
+            PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            SEGWIT_ADDRESS.to_string(),
+            SignatureFormat::Full,
+            None,
+        );
+        let sign_message = full_sign.sign().unwrap();
+
+        let simple_sign = Signer::new(
+            PRIVATE_KEY_TESTNET.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            SEGWIT_TESTNET_ADDRESS.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+        let sign_message_testnet = simple_sign.sign().unwrap();
+
+        let full_verify = Verifier::new(
+            SEGWIT_ADDRESS.to_string(),
+            sign_message,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Full,
+            None,
+        );
+
+        let verify_message = full_verify.verify().unwrap();
+
+        let simple_verify = Verifier::new(
+            SEGWIT_TESTNET_ADDRESS.to_string(),
+            sign_message_testnet,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+
+        let verify_message_testnet = simple_verify.verify().unwrap();
+
+        assert!(verify_message);
+        assert!(verify_message_testnet);
+    }
+
+    #[test]
+    fn test_sign_and_verify_taproot_address() {
+        let full_sign = Signer::new(
+            PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            TAPROOT_ADDRESS.to_string(),
+            SignatureFormat::Full,
+            None,
+        );
+        let sign_message = full_sign.sign().unwrap();
+
+        let simple_sign = Signer::new(
+            PRIVATE_KEY.to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            TAPROOT_TESTNET_ADDRESS.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+
+        let sign_message_testnet = simple_sign.sign().unwrap();
+
+        let full_verify = Verifier::new(
+            TAPROOT_ADDRESS.to_string(),
+            sign_message,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Full,
+            None,
+        );
+
+        let verify_message = full_verify.verify().unwrap();
+
+        let simple_verify = Verifier::new(
+            TAPROOT_TESTNET_ADDRESS.to_string(),
+            sign_message_testnet,
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+
+        let verify_message_testnet = simple_verify.verify().unwrap();
+
+        assert!(verify_message);
+        assert!(verify_message_testnet);
+    }
+
+    #[test]
+    fn test_simple_segwit_verification() {
+        let simple_verify = Verifier::new(
+            SEGWIT_ADDRESS.to_string(),
+            "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=".to_string(),
+            HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+        assert!(simple_verify.verify().unwrap());
+
+        let simple_verify_2 = Verifier::new(
+            SEGWIT_ADDRESS.to_string(),
+            "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy".to_string(),
+                HELLO_WORLD_MESSAGE.to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+        assert!(simple_verify_2.verify().unwrap());
+
+        let simple_verify_empty_message = Verifier::new(
+            SEGWIT_ADDRESS.to_string(),
+            "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy".to_string(),
+                "".to_string(),
+            SignatureFormat::Simple,
+            None,
+        );
+        assert!(simple_verify_empty_message.verify().unwrap());
+
+        let simple_verify_empty_message_2 = Verifier::new(
+                SEGWIT_ADDRESS.to_string(),
+                "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=".to_string(),
+                    "".to_string(),
+                SignatureFormat::Simple,
+                None,
+            );
+        assert!(simple_verify_empty_message_2.verify().unwrap());
+    }
+}
