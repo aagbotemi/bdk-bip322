@@ -1,3 +1,6 @@
+//! The verification implementation of generated signature for BIP-322 for
+//! message signing according to the BIP-322 standard.
+
 use alloc::{
     str::FromStr,
     string::{String, ToString},
@@ -17,6 +20,19 @@ use bitcoin::{
 
 use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 
+/// BIP322Verification encapsulates the data and functionality required to verify a message
+/// signature according to the BIP322 protocol. It supports verifying signatures produced
+/// using different signature formats:
+/// - **Legacy:** Standard ECDSA signatures.
+/// - **Simple:** Simplified signatures that encapsulate witness data.
+/// - **Full:** Fully signed transactions with witness details.
+///
+/// # Fields
+/// - `address_str`: The Bitcoin address as a string against which the signature will be verified.
+/// - `signature`: A Base64-encoded signature string.
+/// - `message`: The original message that was signed.
+/// - `signature_type`: The signature format used during signing, defined by `Bip322SignatureFormat`.
+/// - `priv_key`: An optional private key string. Required for verifying legacy signatures.
 pub struct Verifier {
     address_str: String,
     signature: String,
@@ -26,6 +42,30 @@ pub struct Verifier {
 }
 
 impl Verifier {
+    /// Creates a new instance of `BIP322Verification` with the given parameters.
+    ///
+    /// # Arguments
+    /// - `address_str`: The Bitcoin address (as a string) associated with the signature.
+    /// - `signature`: The Base64-encoded signature to verify.
+    /// - `message`: The original message that was signed.
+    /// - `signature_type`: The BIP322 signature format that was used (Legacy, Simple, or Full).
+    /// - `priv_key`: An optional private key string used for legacy verification.
+    ///
+    /// # Returns
+    /// An instance of `BIP322Verification`.
+    ///
+    /// # Example
+    /// ```
+    /// # use bdk_wallet::bip322::{BIP322Verification, Bip322SignatureFormat};
+    ///
+    /// let verifier = BIP322Verification::new(
+    ///     "1BitcoinAddress...".to_string(),
+    ///     "Base64EncodedSignature==".to_string(),
+    ///     "Hello, Bitcoin!".to_string(),
+    ///     Bip322SignatureFormat::Legacy,
+    ///     Some("c...".to_string()),
+    /// );
+    /// ```
     pub fn new(
         address_str: String,
         signature: String,
@@ -42,6 +82,15 @@ impl Verifier {
         }
     }
 
+    /// Verifies a BIP322 message signature against the provided address and message.
+    ///
+    /// The verification logic differs depending on the signature format:
+    /// - Legacy
+    /// - Simple
+    /// - Full
+    ///
+    /// Returns `true` if the signature is valid, or an error if the decoding or verification
+    /// process fails.
     pub fn verify(&self) -> Result<bool, Error> {
         let address = Address::from_str(&self.address_str)
             .map_err(|_| Error::InvalidAddress)?
@@ -90,6 +139,24 @@ impl Verifier {
         }
     }
 
+    /// Verifies a BIP322-signed message by reconstructing the underlying transaction data
+    /// and checking the signature against the provided address and message.
+    ///
+    /// This function performs the following steps:
+    /// 1. Constructs a corresponding signing transaction (`to_sign`) using the witness data
+    ///    from the given transaction.
+    /// 2. It delegates the verification process to the appropriate helper function:
+    ///    - P2WPKH
+    ///    - P2TR
+    ///    - P2SH
+    /// 3. If none of the supported script types match, the function returns `Ok(false)`.
+    ///
+    /// # Returns
+    /// A `Result` containing:
+    /// - `Ok(true)` if the signature is valid.
+    /// - `Ok(false)` if the signature does not match the expected verification criteria.
+    /// - An error of type `BIP322Error` if the verification process fails at any step,
+    ///   such as during transaction reconstruction or when decoding the witness data.
     fn verify_message(&self, address: Address, transaction: Transaction) -> Result<bool, Error> {
         let script_pubkey = address.script_pubkey();
 

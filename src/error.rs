@@ -1,22 +1,45 @@
+//! Error types for BIP‑322 operations.
+
+/// All possible errors that can occur when signing or verifying a BIP‑322 message.
+
 use alloc::string::String;
 use core::fmt;
 
+/// Error types for BIP322 message signing and verification operations.
+///
+/// This enum encompasses all possible errors that can occur during the BIP322
+/// message signing or verification process.
 #[derive(Debug)]
 pub enum Error {
+    /// Error encountered when extracting data, such as from a PSBT
     ExtractionError(String),
+    /// The provided private key is invalid
     InvalidPrivateKey,
+    /// The provided Bitcoin address is invalid
     InvalidAddress,
+    /// The format of the data is invalid for the given context
     InvalidFormat(String),
+    /// The message does not meet requirements
     InvalidMessage,
+    /// The script or address type is not supported
     UnsupportedType,
+    /// The provided public key is invalid
     InvalidPublicKey(String),
+    /// Unable to compute the signature hash for signing
     SighashError,
+    /// Error encountered when decoding Base64 data
     Base64DecodeError,
+    /// The digital signature is invalid
     InvalidSignature(String),
+    /// Error encountered when decoding Bitcoin consensus data
     DecodeError(String),
+    /// The address is not a Segwit address
     NotSegwitAddress,
+    /// The Segwit version is not supported for the given context
     UnsupportedSegwitVersion(String),
+    /// The provided sighash type is invalid for this context
     InvalidSighashType,
+    /// The transaction witness data is invalid
     InvalidWitness(String),
 }
 

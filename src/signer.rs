@@ -1,3 +1,6 @@
+//! The signature generation implementation for BIP-322 for message signing
+//! according to the BIP-322 standard.
+
 use alloc::{
     str::FromStr,
     string::{String, ToString},
@@ -19,6 +22,19 @@ use bitcoin::{
 
 use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 
+/// BIP322Signature encapsulates all the data and functionality required to sign a message
+/// according to the BIP322 specification. It supports multiple signature formats:
+/// - **Legacy:** Produces a standard ECDSA signature for P2PKH addresses.
+/// - **Simple:** Creates a simplified signature that encodes witness data.
+/// - **Full:** Constructs a complete transaction with witness details and signs it.
+///
+/// # Fields
+/// - `private_key_str`: A WIF-encoded private key as a `String`.  
+/// - `message`: The message to be signed.
+/// - `address_str`: The Bitcoin address associated with the signing process.
+/// - `signature_type`: The signature format to use, defined by `Bip322SignatureFormat`.
+/// - `proof_of_funds`: An optional vector of tuples providing additional UTXO information
+///   (proof of funds) used in advanced signing scenarios.
 pub struct Signer {
     private_key_str: String,
     message: String,
@@ -28,6 +44,34 @@ pub struct Signer {
 }
 
 impl Signer {
+    /// Creates a new instance of `BIP322Signature` with the specified parameters.
+    ///
+    /// # Arguments
+    /// - `private_key_str`: A WIF-encoded private key as a `String`.
+    /// - `message`: The message to be signed.
+    /// - `address`: The Bitcoin address for which the signature is intended.
+    /// - `signature_type`: The BIP322 signature format to be used. Can be one of Legacy, Simple, or Full.
+    /// - `proof_of_funds`: An optional vector of UTXO information tuples, where each tuple contains:
+    ///    - `OutPoint`: A reference to a previous transaction output.
+    ///    - `ScriptBuf`: The script for the UTXO.
+    ///    - `Witness`: The witness data associated with the UTXO.
+    ///    - `Sequence`: The sequence number.
+    ///
+    /// # Returns
+    /// An instance of `BIP322Signature`.
+    ///
+    /// # Example
+    /// ```
+    /// # use bdk_wallet::bip322::{BIP322Signature, Bip322SignatureFormat};
+    ///
+    /// let signer = BIP322Signature::new(
+    ///     "c...".to_string(),
+    ///     "Hello, Bitcoin!".to_string(),
+    ///     "1BitcoinAddress...".to_string(),
+    ///     Bip322SignatureFormat::Legacy,
+    ///     None,
+    /// );
+    /// ```
     pub fn new(
         private_key_str: String,
         message: String,
@@ -44,6 +88,21 @@ impl Signer {
         }
     }
 
+    /// Signs a message using a provided private key, message, and address with a specified
+    /// BIP322 format (Legacy, Simple, or Full).
+    ///
+    /// - **Legacy:** Generates a traditional ECDSA signature for P2PKH addresses.
+    /// - **Simple:** Constructs a simplified signature by signing the message and encoding
+    ///   the witness data.
+    /// - **Full:** Creates a comprehensive signature by building and signing an entire
+    ///   transaction, including all witness details.
+    ///
+    /// The function extracts the necessary key and script information from the input,
+    /// processes any optional proof of funds, and returns the resulting signature as a
+    /// Base64-encoded string.
+    ///
+    /// # Errors
+    /// Returns a `BIP322Error` if any signing steps fail.
     pub fn sign(&self) -> Result<String, Error> {
         let secp = SecpCtx::new();
         let private_key =
@@ -77,6 +136,22 @@ impl Signer {
         }
     }
 
+    /// Constructs a transaction that includes a signature for the provided message
+    /// according to the BIP322 message signing protocol.
+    ///
+    /// This function builds the transaction to be signed by selecting the appropriate
+    /// signing method based on the script type:
+    /// - P2WPKH
+    /// - P2TR
+    /// - P2SH
+    ///
+    /// Optionally, if a proof of funds is provided, additional inputs are appended
+    /// to support advanced verification scenarios. On success, the function returns a
+    /// complete transaction
+    ///
+    /// # Errors
+    /// Returns a `BIP322Error` if the script type is unsupported or if any part of
+    /// the signing process fails.
     fn sign_message(
         &self,
         private_key: &PrivateKey,

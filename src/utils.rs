@@ -1,3 +1,6 @@
+//! The utility methods for BIP-322 for message signing
+//! according to the BIP-322 standard.
+
 use alloc::{string::ToString, vec};
 
 use bitcoin::{
@@ -12,15 +15,23 @@ use bitcoin::{
 
 use crate::Error;
 
+/// Represents the different formats supported by the BIP322 message signing protocol.
+///
+/// BIP322 defines multiple formats for signatures to accommodate different use cases
+/// and maintain backward compatibility with legacy signing methods.
 #[derive(Debug, PartialEq)]
 pub enum SignatureFormat {
+    /// The legacy Bitcoin message signature format used before BIP322.
     Legacy,
+    /// A simplified version of the BIP322 format that includes only essential data.
     Simple,
+    /// The Full BIP322 format that includes all signature data.
     Full,
 }
 
 const TAG: &str = "BIP0322-signed-message";
 
+/// Creates a tagged hash of a message according to the BIP322 specification.
 pub fn tagged_message_hash(message: &[u8]) -> sha256::Hash {
     let mut engine = sha256::Hash::engine();
 
@@ -32,6 +43,7 @@ pub fn tagged_message_hash(message: &[u8]) -> sha256::Hash {
     sha256::Hash::from_engine(engine)
 }
 
+/// Constructs the "to_spend" transaction according to the BIP322 specification.
 pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
     let txid = Txid::from_slice(&[0u8; 32]).expect("Txid slice error");
 
@@ -61,6 +73,13 @@ pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
     }
 }
 
+/// Constructs a transaction according to the BIP322 specification.
+///
+/// This transaction will be signed to prove ownership of the private key
+/// corresponding to the script_pubkey.
+///
+/// Returns a PSBT (Partially Signed Bitcoin Transaction) ready for signing
+/// or a [`BIP322Error`] if something goes wrong.
 pub fn to_sign(
     script_pubkey: &ScriptBuf,
     txid: Txid,
