@@ -22,7 +22,7 @@ use bitcoin::{
 
 use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 
-/// BIP322Signature encapsulates all the data and functionality required to sign a message
+/// Signer encapsulates all the data and functionality required to sign a message
 /// according to the BIP322 specification. It supports multiple signature formats:
 /// - **Legacy:** Produces a standard ECDSA signature for P2PKH addresses.
 /// - **Simple:** Creates a simplified signature that encodes witness data.
@@ -32,7 +32,7 @@ use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 /// - `private_key_str`: A WIF-encoded private key as a `String`.  
 /// - `message`: The message to be signed.
 /// - `address_str`: The Bitcoin address associated with the signing process.
-/// - `signature_type`: The signature format to use, defined by `Bip322SignatureFormat`.
+/// - `signature_type`: The signature format to use, defined by `SignatureFormat`.
 /// - `proof_of_funds`: An optional vector of tuples providing additional UTXO information
 ///   (proof of funds) used in advanced signing scenarios.
 pub struct Signer {
@@ -44,7 +44,7 @@ pub struct Signer {
 }
 
 impl Signer {
-    /// Creates a new instance of `BIP322Signature` with the specified parameters.
+    /// Creates a new instance of `Signer` with the specified parameters.
     ///
     /// # Arguments
     /// - `private_key_str`: A WIF-encoded private key as a `String`.
@@ -58,17 +58,17 @@ impl Signer {
     ///    - `Sequence`: The sequence number.
     ///
     /// # Returns
-    /// An instance of `BIP322Signature`.
+    /// An instance of `Signer`.
     ///
     /// # Example
     /// ```
-    /// # use bdk_wallet::bip322::{BIP322Signature, Bip322SignatureFormat};
+    /// # use bdk_bip322::{Signer, SignatureFormat};
     ///
-    /// let signer = BIP322Signature::new(
+    /// let signer = Signer::new(
     ///     "c...".to_string(),
     ///     "Hello, Bitcoin!".to_string(),
     ///     "1BitcoinAddress...".to_string(),
-    ///     Bip322SignatureFormat::Legacy,
+    ///     SignatureFormat::Legacy,
     ///     None,
     /// );
     /// ```

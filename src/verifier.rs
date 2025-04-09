@@ -20,7 +20,7 @@ use bitcoin::{
 
 use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 
-/// BIP322Verification encapsulates the data and functionality required to verify a message
+/// Verifier encapsulates the data and functionality required to verify a message
 /// signature according to the BIP322 protocol. It supports verifying signatures produced
 /// using different signature formats:
 /// - **Legacy:** Standard ECDSA signatures.
@@ -31,7 +31,7 @@ use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 /// - `address_str`: The Bitcoin address as a string against which the signature will be verified.
 /// - `signature`: A Base64-encoded signature string.
 /// - `message`: The original message that was signed.
-/// - `signature_type`: The signature format used during signing, defined by `Bip322SignatureFormat`.
+/// - `signature_type`: The signature format used during signing, defined by `SignatureFormat`.
 /// - `priv_key`: An optional private key string. Required for verifying legacy signatures.
 pub struct Verifier {
     address_str: String,
@@ -42,7 +42,7 @@ pub struct Verifier {
 }
 
 impl Verifier {
-    /// Creates a new instance of `BIP322Verification` with the given parameters.
+    /// Creates a new instance of `Verifier` with the given parameters.
     ///
     /// # Arguments
     /// - `address_str`: The Bitcoin address (as a string) associated with the signature.
@@ -52,17 +52,17 @@ impl Verifier {
     /// - `priv_key`: An optional private key string used for legacy verification.
     ///
     /// # Returns
-    /// An instance of `BIP322Verification`.
+    /// An instance of `Verifier`.
     ///
     /// # Example
     /// ```
-    /// # use bdk_wallet::bip322::{BIP322Verification, Bip322SignatureFormat};
+    /// # use bdk_bip322::{Verifier, SignatureFormat};
     ///
-    /// let verifier = BIP322Verification::new(
+    /// let verifier = Verifier::new(
     ///     "1BitcoinAddress...".to_string(),
     ///     "Base64EncodedSignature==".to_string(),
     ///     "Hello, Bitcoin!".to_string(),
-    ///     Bip322SignatureFormat::Legacy,
+    ///     SignatureFormat::Legacy,
     ///     Some("c...".to_string()),
     /// );
     /// ```

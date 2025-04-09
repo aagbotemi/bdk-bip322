@@ -1,7 +1,6 @@
 //! Error types for BIP‑322 operations.
 
 /// All possible errors that can occur when signing or verifying a BIP‑322 message.
-
 use alloc::string::String;
 use core::fmt;
 
