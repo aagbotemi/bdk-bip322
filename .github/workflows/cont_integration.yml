@@ -16,11 +16,12 @@ jobs:
       matrix:
         rust:
           - toolchain: stable
-          - toolchain: 1.63.0
+          - toolchain: 1.75.0 
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
             toolchain: ${{ matrix.rust.toolchain }}
             override: true
@@ -29,18 +30,30 @@ jobs:
           cargo build --no-default-features
           cargo test --no-fail-fast --all-features
 
-  fmt-clippy:
-    name: Rust fmt & clippy
+  fmt:
+    name: Rust fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
             toolchain: stable
-            components: clippy, rustfmt
-            override: true
+            components: rustfmt
       - name: Rust fmt
         run: cargo fmt --all -- --check
+
+  clippy:
+    name: Rust clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+            toolchain: 1.84.0
+            components: clippy
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

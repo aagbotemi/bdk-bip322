@@ -2,7 +2,7 @@
 name = "bdk-bip322"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.75.0"
 
 [dependencies]
 bitcoin = { version = "0.32.5", features = [ "base64" ], default-features = false }
