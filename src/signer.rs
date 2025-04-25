@@ -13,8 +13,8 @@ use bitcoin::{
     secp256k1::{ecdsa::Signature, Message},
     sighash::{self, SighashCache},
     sign_message::signed_msg_hash,
-    Address, Amount, EcdsaSighashType, PrivateKey, Psbt, PublicKey, ScriptBuf,
-    TapSighashType, Transaction, TxOut, Witness,
+    Address, Amount, EcdsaSighashType, PrivateKey, Psbt, PublicKey, ScriptBuf, TapSighashType,
+    Transaction, TxOut, Witness,
 };
 
 use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
