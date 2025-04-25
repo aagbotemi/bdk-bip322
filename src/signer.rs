@@ -7,17 +7,14 @@ use alloc::{
     vec::Vec,
 };
 use bitcoin::{
-    absolute::LockTime,
     base64::{prelude::BASE64_STANDARD, Engine},
     consensus::serialize,
     key::{Keypair, TapTweak},
-    psbt::Input,
     secp256k1::{ecdsa::Signature, Message},
     sighash::{self, SighashCache},
     sign_message::signed_msg_hash,
-    transaction::Version,
-    Address, Amount, EcdsaSighashType, OutPoint, PrivateKey, Psbt, PublicKey, ScriptBuf, Sequence,
-    TapSighashType, Transaction, TxIn, TxOut, Witness,
+    Address, Amount, EcdsaSighashType, PrivateKey, Psbt, PublicKey, ScriptBuf,
+    TapSighashType, Transaction, TxOut, Witness,
 };
 
 use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
@@ -33,14 +30,11 @@ use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
 /// - `message`: The message to be signed.
 /// - `address_str`: The Bitcoin address associated with the signing process.
 /// - `signature_type`: The signature format to use, defined by `SignatureFormat`.
-/// - `proof_of_funds`: An optional vector of tuples providing additional UTXO information
-///   (proof of funds) used in advanced signing scenarios.
 pub struct Signer {
     private_key_str: String,
     message: String,
     address_str: String,
     signature_type: SignatureFormat,
-    proof_of_funds: Option<Vec<(OutPoint, ScriptBuf, Witness, Sequence)>>,
 }
 
 impl Signer {
@@ -51,11 +45,6 @@ impl Signer {
     /// - `message`: The message to be signed.
     /// - `address`: The Bitcoin address for which the signature is intended.
     /// - `signature_type`: The BIP322 signature format to be used. Can be one of Legacy, Simple, or Full.
-    /// - `proof_of_funds`: An optional vector of UTXO information tuples, where each tuple contains:
-    ///    - `OutPoint`: A reference to a previous transaction output.
-    ///    - `ScriptBuf`: The script for the UTXO.
-    ///    - `Witness`: The witness data associated with the UTXO.
-    ///    - `Sequence`: The sequence number.
     ///
     /// # Returns
     /// An instance of `Signer`.
@@ -69,7 +58,6 @@ impl Signer {
     ///     "Hello, Bitcoin!".to_string(),
     ///     "1BitcoinAddress...".to_string(),
     ///     SignatureFormat::Legacy,
-    ///     None,
     /// );
     /// ```
     pub fn new(
@@ -77,14 +65,12 @@ impl Signer {
         message: String,
         address_str: String,
         signature_type: SignatureFormat,
-        proof_of_funds: Option<Vec<(OutPoint, ScriptBuf, Witness, Sequence)>>,
     ) -> Self {
         Self {
             private_key_str,
             message,
             address_str,
             signature_type,
-            proof_of_funds,
         }
     }
 
@@ -166,25 +152,6 @@ impl Signer {
             to_spend.input[0].sequence,
             Some(to_spend.input[0].witness.clone()),
         )?;
-
-        if let Some(proofs) = self.proof_of_funds.clone() {
-            for (previous_output, script_sig, witness, sequence) in proofs {
-                to_sign.inputs.push(Input {
-                    non_witness_utxo: Some(Transaction {
-                        input: vec![TxIn {
-                            previous_output,
-                            script_sig,
-                            sequence,
-                            witness,
-                        }],
-                        output: vec![],
-                        version: Version(2),
-                        lock_time: LockTime::ZERO,
-                    }),
-                    ..Default::default()
-                })
-            }
-        }
 
         let mut sighash_cache = SighashCache::new(&to_sign.unsigned_tx);
 
@@ -318,7 +285,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             SEGWIT_ADDRESS.to_string(),
             SignatureFormat::Simple,
-            None,
         );
         let sign_message = simple_sign.sign().unwrap();
 
@@ -327,7 +293,6 @@ mod tests {
             "".to_string(),
             SEGWIT_ADDRESS.to_string(),
             SignatureFormat::Simple,
-            None,
         );
         let sign_empty_msg_sig = sign_empty_msg.sign().unwrap();
 

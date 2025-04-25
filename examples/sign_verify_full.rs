@@ -58,7 +58,6 @@ async fn main() -> Result<(), anyhow::Error> {
         message.clone(),
         address.clone(),
         SignatureFormat::Full,
-        None,
     );
     let signature = signer.sign().unwrap();
 

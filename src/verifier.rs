@@ -411,7 +411,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             LEGACY_ADDRESS.to_string(),
             SignatureFormat::Legacy,
-            None,
         );
         let sign_message = legacy_sign.sign().unwrap();
 
@@ -420,7 +419,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             LEGACY_ADDRESS_TESTNET.to_string(),
             SignatureFormat::Legacy,
-            None,
         );
         let sign_message_testnet = legacy_sign_testnet.sign().unwrap();
 
@@ -455,7 +453,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             LEGACY_ADDRESS.to_string(),
             SignatureFormat::Legacy,
-            None,
         );
         let sign_message = legacy_sign.sign().unwrap();
 
@@ -479,7 +476,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             NESTED_SEGWIT_ADDRESS.to_string(),
             SignatureFormat::Simple,
-            None,
         );
 
         let sign_message = nested_segwit_simple_sign.sign().unwrap();
@@ -493,7 +489,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             NESTED_SEGWIT_TESTNET_ADDRESS.to_string(),
             SignatureFormat::Full,
-            None,
         );
 
         let sign_message_testnet = nested_segwit_full_sign_testnet.sign().unwrap();
@@ -533,7 +528,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             SEGWIT_ADDRESS.to_string(),
             SignatureFormat::Full,
-            None,
         );
         let sign_message = full_sign.sign().unwrap();
 
@@ -542,7 +536,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             SEGWIT_TESTNET_ADDRESS.to_string(),
             SignatureFormat::Simple,
-            None,
         );
         let sign_message_testnet = simple_sign.sign().unwrap();
 
@@ -577,7 +570,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             TAPROOT_ADDRESS.to_string(),
             SignatureFormat::Full,
-            None,
         );
         let sign_message = full_sign.sign().unwrap();
 
@@ -586,7 +578,6 @@ mod tests {
             HELLO_WORLD_MESSAGE.to_string(),
             TAPROOT_TESTNET_ADDRESS.to_string(),
             SignatureFormat::Simple,
-            None,
         );
 
         let sign_message_testnet = simple_sign.sign().unwrap();
