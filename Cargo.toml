@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.75.0"
 
 [dependencies]
-bitcoin = { version = "0.32.6", features = [ "base64" ], default-features = false }
+bitcoin = { version = "0.32.5", features = [ "base64" ], default-features = false }
 
 [features]
 default = ["std"]
