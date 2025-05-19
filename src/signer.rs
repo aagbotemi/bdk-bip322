@@ -241,7 +241,7 @@ impl Signer {
         let keypair = Keypair::from_secret_key(&secp, &private_key.inner);
         let key_pair = keypair
             .tap_tweak(&secp, to_sign.inputs[0].tap_merkle_root)
-            .to_inner();
+            .to_keypair();
         let x_only_public_key = keypair.x_only_public_key().0;
 
         let sighash_type = TapSighashType::All;

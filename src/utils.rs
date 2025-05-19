@@ -19,7 +19,7 @@ use crate::Error;
 ///
 /// BIP322 defines multiple formats for signatures to accommodate different use cases
 /// and maintain backward compatibility with legacy signing methods.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SignatureFormat {
     /// The legacy Bitcoin message signature format used before BIP322.
     Legacy,
