@@ -2,307 +2,213 @@
 //! according to the BIP-322 standard.
 
 use alloc::{
-    str::FromStr,
     string::{String, ToString},
     vec::Vec,
 };
+use bdk_wallet::{SignOptions, Wallet};
 use bitcoin::{
-    base64::{prelude::BASE64_STANDARD, Engine},
-    consensus::serialize,
+    base64::{engine::general_purpose, Engine},
+    consensus::Encodable,
+    io::Cursor,
     key::{Keypair, TapTweak},
+    psbt::PsbtSighashType,
     secp256k1::{ecdsa::Signature, Message},
     sighash::{self, SighashCache},
-    sign_message::signed_msg_hash,
-    Address, Amount, EcdsaSighashType, PrivateKey, Psbt, PublicKey, ScriptBuf, TapSighashType,
-    Transaction, TxOut, Witness,
+    Address, EcdsaSighashType, OutPoint, Psbt, ScriptBuf, Sequence, TapSighashType, TxIn, TxOut,
+    Witness,
 };
+use std::println;
 
-use crate::{to_sign, to_spend, Error, SecpCtx, SignatureFormat};
+use crate::{to_sign, to_spend, Error, SignatureFormat};
 
-/// Signer encapsulates all the data and functionality required to sign a message
-/// according to the BIP322 specification. It supports multiple signature formats:
-/// - **Legacy:** Produces a standard ECDSA signature for P2PKH addresses.
-/// - **Simple:** Creates a simplified signature that encodes witness data.
-/// - **Full:** Constructs a complete transaction with witness details and signs it.
-///
-/// # Fields
-/// - `private_key_str`: A WIF-encoded private key as a `String`.  
-/// - `message`: The message to be signed.
-/// - `address_str`: The Bitcoin address associated with the signing process.
-/// - `signature_type`: The signature format to use, defined by `SignatureFormat`.
-pub struct Signer {
-    private_key_str: String,
-    message: String,
-    address_str: String,
-    signature_type: SignatureFormat,
+pub trait BIP322 {
+    fn sign_bip322(
+        &mut self,
+        message: &str,
+        utxos: Option<Vec<OutPoint>>,
+        address: Address,
+        sig_type: SignatureFormat,
+    ) -> Result<Bip322Proof, Error>;
+    fn verify_bip322(
+        &mut self,
+        proof: &Bip322Proof,
+        message: &str,
+        sig_type: SignatureFormat,
+    ) -> Result<bool, Error>;
 }
 
-impl Signer {
-    /// Creates a new instance of `Signer` with the specified parameters.
-    ///
-    /// # Arguments
-    /// - `private_key_str`: A WIF-encoded private key as a `String`.
-    /// - `message`: The message to be signed.
-    /// - `address`: The Bitcoin address for which the signature is intended.
-    /// - `signature_type`: The BIP322 signature format to be used. Can be one of Legacy, Simple, or Full.
-    ///
-    /// # Returns
-    /// An instance of `Signer`.
-    ///
-    /// # Example
-    /// ```
-    /// # use bdk_bip322::{Signer, SignatureFormat};
-    ///
-    /// let signer = Signer::new(
-    ///     "c...".to_string(),
-    ///     "Hello, Bitcoin!".to_string(),
-    ///     "1BitcoinAddress...".to_string(),
-    ///     SignatureFormat::Legacy,
-    /// );
-    /// ```
-    pub fn new(
-        private_key_str: String,
-        message: String,
-        address_str: String,
-        signature_type: SignatureFormat,
-    ) -> Self {
-        Self {
-            private_key_str,
-            message,
-            address_str,
-            signature_type,
+#[derive(Debug)]
+pub enum Bip322Proof {
+    Signed(String),
+    Psbt(Psbt),
+}
+
+impl BIP322 for Wallet {
+    fn sign_bip322(
+        &mut self,
+        message: &str,
+        utxos: Option<Vec<OutPoint>>,
+        address: Address,
+        sig_type: SignatureFormat,
+    ) -> Result<Bip322Proof, Error> {
+        let script_pubkey = address.script_pubkey();
+
+        let to_spend = to_spend(&script_pubkey, message);
+        let mut to_sign = to_sign(&to_spend)?;
+
+        if sig_type == SignatureFormat::FullWithProofOfFunds {
+            let address_utxos: Vec<(OutPoint, TxOut)> = if let Some(specific_utxos) = utxos {
+                // Use only the specified UTXOs that belong to this address
+                self.list_unspent()
+                    .into_iter()
+                    .filter(|utxo| {
+                        specific_utxos.contains(&utxo.outpoint)
+                            && utxo.txout.script_pubkey == script_pubkey
+                    })
+                    .map(|utxo| (utxo.outpoint, utxo.txout))
+                    .collect()
+            } else {
+                // If no specific UTXOs provided, use ALL UTXOs for this address
+                self.list_unspent()
+                    .into_iter()
+                    .filter(|utxo| utxo.txout.script_pubkey == script_pubkey)
+                    .map(|utxo| (utxo.outpoint, utxo.txout))
+                    .collect()
+            };
+
+            if address_utxos.is_empty() {
+                return Err(Error::InvalidFormat(
+                    "No UTXOs available for proof-of-funds".to_string(),
+                ));
+            }
+
+            for (outpoint, _) in &address_utxos {
+                to_sign.input.push(TxIn {
+                    previous_output: *outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::ZERO,
+                    witness: Witness::new(),
+                });
+            }
+        } else if utxos.is_some() {
+            return Err(Error::InvalidFormat(
+                "UTXOs only supported for FullWithProofOfFunds".to_string(),
+            ));
         }
-    }
 
-    /// Signs a message using a provided private key, message, and address with a specified
-    /// BIP322 format (Legacy, Simple, or Full).
-    ///
-    /// - **Legacy:** Generates a traditional ECDSA signature for P2PKH addresses.
-    /// - **Simple:** Constructs a simplified signature by signing the message and encoding
-    ///   the witness data.
-    /// - **Full:** Creates a comprehensive signature by building and signing an entire
-    ///   transaction, including all witness details.
-    ///
-    /// The function extracts the necessary key and script information from the input,
-    /// processes any optional proof of funds, and returns the resulting signature as a
-    /// Base64-encoded string.
-    ///
-    /// # Errors
-    /// Returns a `BIP322Error` if any signing steps fail.
-    pub fn sign(&self) -> Result<String, Error> {
-        let secp = SecpCtx::new();
-        let private_key =
-            PrivateKey::from_wif(&self.private_key_str).map_err(|_| Error::InvalidPrivateKey)?;
-        let pubkey = private_key.public_key(&secp);
+        let mut psbt = Psbt::from_unsigned_tx(to_sign)?;
 
-        let script_pubkey = Address::from_str(&self.address_str)
-            .map_err(|_| Error::InvalidAddress)?
-            .assume_checked()
-            .script_pubkey();
+        for (i, (psbt_input, tx_input)) in psbt
+            .inputs
+            .iter_mut()
+            .zip(psbt.unsigned_tx.input.iter())
+            .enumerate()
+        {
+            psbt_input.sighash_type = if script_pubkey.is_p2tr() {
+                Some(PsbtSighashType::from(TapSighashType::All))
+            } else {
+                Some(PsbtSighashType::from(EcdsaSighashType::All))
+            };
 
-        match &self.signature_type {
-            SignatureFormat::Legacy => {
-                if !script_pubkey.is_p2pkh() {
-                    return Err(Error::InvalidFormat("legacy".to_string()));
+            if i == 0 {
+                if script_pubkey.is_p2tr() || script_pubkey.is_p2wpkh() || script_pubkey.is_p2wsh()
+                {
+                    psbt_input.witness_utxo = Some(to_spend.output[0].clone())
+                } else {
+                    psbt_input.non_witness_utxo = Some(to_spend.clone())
                 }
+            } else {
+                let utxo = self
+                    .get_utxo(tx_input.previous_output)
+                    .ok_or(Error::UnsupportedType)?;
 
-                let sig_serialized = self.sign_legacy(&private_key)?;
-                Ok(BASE64_STANDARD.encode(sig_serialized))
-            }
-            SignatureFormat::Simple => {
-                let witness = self.sign_message(&private_key, pubkey, &script_pubkey)?;
+                let txout = utxo.txout;
 
-                Ok(BASE64_STANDARD.encode(serialize(&witness.input[0].witness.clone())))
-            }
-            SignatureFormat::Full => {
-                let transaction = self.sign_message(&private_key, pubkey, &script_pubkey)?;
-
-                Ok(BASE64_STANDARD.encode(serialize(&transaction)))
+                if txout.script_pubkey.is_p2tr()
+                    || txout.script_pubkey.is_p2wpkh()
+                    || txout.script_pubkey.is_p2wsh()
+                {
+                    psbt_input.witness_utxo = Some(txout.clone());
+                } else {
+                    let tx = self
+                        .get_tx(tx_input.previous_output.txid)
+                        .ok_or(Error::InvalidMessage)?;
+                    psbt_input.non_witness_utxo = Some(tx.tx_node.tx.as_ref().clone());
+                }
             }
         }
-    }
 
-    /// Constructs a transaction that includes a signature for the provided message
-    /// according to the BIP322 message signing protocol.
-    ///
-    /// This function builds the transaction to be signed by selecting the appropriate
-    /// signing method based on the script type:
-    /// - P2WPKH
-    /// - P2TR
-    /// - P2SH
-    ///
-    /// Optionally, if a proof of funds is provided, additional inputs are appended
-    /// to support advanced verification scenarios. On success, the function returns a
-    /// complete transaction
-    ///
-    /// # Errors
-    /// Returns a `BIP322Error` if the script type is unsupported or if any part of
-    /// the signing process fails.
-    fn sign_message(
-        &self,
-        private_key: &PrivateKey,
-        pubkey: PublicKey,
-        script_pubkey: &ScriptBuf,
-    ) -> Result<Transaction, Error> {
-        let to_spend = to_spend(script_pubkey, &self.message);
-        let mut to_sign = to_sign(
-            &to_spend.output[0].script_pubkey,
-            to_spend.compute_txid(),
-            to_spend.lock_time,
-            to_spend.input[0].sequence,
-            Some(to_spend.input[0].witness.clone()),
-        )?;
-
-        let mut sighash_cache = SighashCache::new(&to_sign.unsigned_tx);
-
-        let witness = if script_pubkey.is_p2wpkh() {
-            self.sign_p2sh_p2wpkh(&mut sighash_cache, to_spend, private_key, pubkey, true)?
-        } else if script_pubkey.is_p2tr() || script_pubkey.is_p2wsh() {
-            self.sign_p2tr(&mut sighash_cache, to_spend, to_sign.clone(), private_key)?
-        } else if script_pubkey.is_p2sh() {
-            self.sign_p2sh_p2wpkh(&mut sighash_cache, to_spend, private_key, pubkey, false)?
-        } else {
-            return Err(Error::UnsupportedType);
+        let sign_options = SignOptions {
+            trust_witness_utxo: true,
+            ..Default::default()
         };
 
-        to_sign.inputs[0].final_script_witness = Some(witness);
+        let finalized = self.sign(&mut psbt, sign_options)?;
 
-        let transaction = to_sign
-            .extract_tx()
-            .map_err(|_| Error::ExtractionError("transaction".to_string()))?;
+        if finalized {
+            let mut buffer = Vec::new();
 
-        Ok(transaction)
+            match sig_type {
+                SignatureFormat::Simple => {
+                    if !script_pubkey.is_p2tr()
+                        && !script_pubkey.is_p2wpkh()
+                        && !script_pubkey.is_p2wsh()
+                    {
+                        return Err(Error::InvalidFormat(
+                            "Simple format requires segwit address".to_string(),
+                        ));
+                    }
+
+                    let witness = psbt.inputs[0]
+                        .final_script_witness
+                        .as_ref()
+                        .ok_or(Error::InvalidFormat("No final witness found".to_string()))?;
+
+                    if witness.is_empty() {
+                        return Err(Error::InvalidFormat("Empty witness".to_string()));
+                    }
+
+                    if script_pubkey.is_p2wpkh() && witness.len() != 2 {
+                        return Err(Error::InvalidFormat(
+                            "Invalid P2WPKH witness structure".to_string(),
+                        ));
+                    } else if script_pubkey.is_p2tr() && witness.len() < 1 {
+                        return Err(Error::InvalidFormat(
+                            "Invalid P2TR witness structure".to_string(),
+                        ));
+                    }
+
+                    witness.consensus_encode(&mut buffer)?;
+                    let simple_signature = general_purpose::STANDARD.encode(&buffer);
+                    return Ok(Bip322Proof::Signed(simple_signature));
+                }
+                SignatureFormat::Full | SignatureFormat::FullWithProofOfFunds => {
+                    let tx = psbt.extract_tx()?;
+                    tx.consensus_encode(&mut buffer)?;
+                    let full_signature = general_purpose::STANDARD.encode(&buffer);
+                    return Ok(Bip322Proof::Signed(full_signature));
+                }
+            }
+        } else {
+            return Ok(Bip322Proof::Psbt(psbt));
+        }
     }
 
-    fn sign_legacy(&self, private_key: &PrivateKey) -> Result<Vec<u8>, Error> {
-        let secp = SecpCtx::new();
+    fn verify_bip322(
+        &mut self,
+        proof: &Bip322Proof,
+        message: &str,
+        sig_type: SignatureFormat,
+    ) -> Result<bool, Error> {
+        match proof {
+            Bip322Proof::Signed(tx) => {
+                println!("Got a fully signed raw tx: {:?}", tx);
+            }
+            Bip322Proof::Psbt(psbt) => {
+                println!("Got a PSBT that needs hardware signing: {:?}", psbt);
+            }
+        }
 
-        let message_hash = signed_msg_hash(&self.message);
-        let message = &Message::from_digest_slice(message_hash.as_ref())
-            .map_err(|_| Error::InvalidMessage)?;
-
-        let mut signature: Signature = secp.sign_ecdsa(message, &private_key.inner);
-        signature.normalize_s();
-        let mut sig_serialized = signature.serialize_der().to_vec();
-        sig_serialized.push(EcdsaSighashType::All as u8);
-
-        Ok(sig_serialized)
-    }
-
-    fn sign_p2sh_p2wpkh(
-        &self,
-        sighash_cache: &mut SighashCache<&Transaction>,
-        to_spend: Transaction,
-        private_key: &PrivateKey,
-        pubkey: PublicKey,
-        is_segwit: bool,
-    ) -> Result<Witness, Error> {
-        let secp = SecpCtx::new();
-        let sighash_type = EcdsaSighashType::All;
-
-        let wpubkey_hash = &pubkey
-            .wpubkey_hash()
-            .map_err(|e| Error::InvalidPublicKey(e.to_string()))?;
-
-        let sighash = sighash_cache
-            .p2wpkh_signature_hash(
-                0,
-                &if is_segwit {
-                    to_spend.output[0].script_pubkey.clone()
-                } else {
-                    ScriptBuf::new_p2wpkh(wpubkey_hash)
-                },
-                to_spend.output[0].value,
-                sighash_type,
-            )
-            .map_err(|_| Error::SighashError)?;
-
-        let msg =
-            &Message::from_digest_slice(sighash.as_ref()).map_err(|_| Error::InvalidMessage)?;
-
-        let signature = secp.sign_ecdsa(msg, &private_key.inner);
-        let mut sig_serialized = signature.serialize_der().to_vec();
-        sig_serialized.push(sighash_type as u8);
-
-        Ok(Witness::from(vec![
-            sig_serialized,
-            pubkey.inner.serialize().to_vec(),
-        ]))
-    }
-
-    fn sign_p2tr(
-        &self,
-        sighash_cache: &mut SighashCache<&Transaction>,
-        to_spend: Transaction,
-        mut to_sign: Psbt,
-        private_key: &PrivateKey,
-    ) -> Result<Witness, Error> {
-        let secp = SecpCtx::new();
-        let keypair = Keypair::from_secret_key(&secp, &private_key.inner);
-        let key_pair = keypair
-            .tap_tweak(&secp, to_sign.inputs[0].tap_merkle_root)
-            .to_keypair();
-        let x_only_public_key = keypair.x_only_public_key().0;
-
-        let sighash_type = TapSighashType::All;
-
-        to_sign.inputs[0].tap_internal_key = Some(x_only_public_key);
-
-        let sighash = sighash_cache
-            .taproot_key_spend_signature_hash(
-                0,
-                &sighash::Prevouts::All(&[TxOut {
-                    value: Amount::from_sat(0),
-                    script_pubkey: to_spend.output[0].clone().script_pubkey,
-                }]),
-                sighash_type,
-            )
-            .map_err(|_| Error::SighashError)?;
-
-        let msg =
-            &Message::from_digest_slice(sighash.as_ref()).map_err(|_| Error::InvalidMessage)?;
-
-        let signature = secp.sign_schnorr_no_aux_rand(msg, &key_pair);
-        let mut sig_serialized = signature.serialize().to_vec();
-        sig_serialized.push(sighash_type as u8);
-
-        Ok(Witness::from(vec![sig_serialized]))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const PRIVATE_KEY: &str = "L3VFeEujGtevx9w18HD1fhRbCH67Az2dpCymeRE1SoPK6XQtaN2k";
-    const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
-    const HELLO_WORLD_MESSAGE: &str = "Hello World";
-
-    #[test]
-    fn test_sign_with_segwit_address() {
-        let simple_sign = Signer::new(
-            PRIVATE_KEY.to_string(),
-            HELLO_WORLD_MESSAGE.to_string(),
-            SEGWIT_ADDRESS.to_string(),
-            SignatureFormat::Simple,
-        );
-        let sign_message = simple_sign.sign().unwrap();
-
-        let sign_empty_msg = Signer::new(
-            PRIVATE_KEY.to_string(),
-            "".to_string(),
-            SEGWIT_ADDRESS.to_string(),
-            SignatureFormat::Simple,
-        );
-        let sign_empty_msg_sig = sign_empty_msg.sign().unwrap();
-
-        assert_eq!(
-            sign_message,
-            "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
-        );
-        assert_eq!(
-            sign_empty_msg_sig,
-            "AkgwRQIhAPkJ1Q4oYS0htvyuSFHLxRQpFAY56b70UvE7Dxazen0ZAiAtZfFz1S6T6I23MWI2lK/pcNTWncuyL8UL+oMdydVgzAEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy"
-        );
+        Ok(true)
     }
 }

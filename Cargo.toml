@@ -5,13 +5,16 @@ edition = "2021"
 rust-version = "1.75.0"
 
 [dependencies]
-bitcoin = { version = "0.32.5", features = [ "base64" ], default-features = false }
+bitcoin = { version = "0.32.6", features = [ "base64" ], default-features = false }
+bdk_wallet = { version = "2.0.0", features = ["rusqlite", "test-utils", "file_store"] }
+
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+anyhow = "1"
+bdk_file_store = { version = "0.21.0", optional = true }
+bdk_esplora = { version = "0.22.0", features = ["blocking", "blocking"] }
+hex = "0.4.3"
 
 [features]
 default = ["std"]
 std = []
-
-[dev-dependencies]
-bdk_wallet = { version = "1.2.0", features = ["rusqlite"] }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-anyhow = "1"
+file_store = ["bdk_file_store"]
