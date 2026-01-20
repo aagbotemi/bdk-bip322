@@ -1,7 +1,14 @@
 //! Error types for BIP‑322 operations.
-
-/// All possible errors that can occur when signing or verifying a BIP‑322 message.
-use alloc::string::String;
+//!
+//! All possible errors that can occur when signing or verifying a BIP‑322 message.
+use alloc::{boxed::Box, string::String};
+use bdk_wallet::signer::SignerError;
+use bitcoin::{
+    OutPoint, Txid,
+    consensus::encode::Error as ConsensusError,
+    io::Error as IoError,
+    psbt::{Error as PsbtError, ExtractTxError},
+};
 use core::fmt;
 
 /// Error types for BIP322 message signing and verification operations.
@@ -10,12 +17,6 @@ use core::fmt;
 /// message signing or verification process.
 #[derive(Debug)]
 pub enum Error {
-    /// Error encountered when extracting data, such as from a PSBT
-    ExtractionError(String),
-    /// The provided private key is invalid
-    InvalidPrivateKey,
-    /// The provided Bitcoin address is invalid
-    InvalidAddress,
     /// The format of the data is invalid for the given context
     InvalidFormat(String),
     /// The message does not meet requirements
@@ -26,12 +27,8 @@ pub enum Error {
     InvalidPublicKey(String),
     /// Unable to compute the signature hash for signing
     SighashError,
-    /// Error encountered when decoding Base64 data
-    Base64DecodeError,
     /// The digital signature is invalid
     InvalidSignature(String),
-    /// Error encountered when decoding Bitcoin consensus data
-    DecodeError(String),
     /// The address is not a Segwit address
     NotSegwitAddress,
     /// The Segwit version is not supported for the given context
@@ -40,27 +37,71 @@ pub enum Error {
     InvalidSighashType,
     /// The transaction witness data is invalid
     InvalidWitness(String),
+    /// Signer Error
+    SignerError(SignerError),
+    /// Bitcoin IoError
+    IoError(IoError),
+    /// ExtractTxError
+    ExtractTxError(Box<ExtractTxError>),
+    /// PsbtError
+    PsbtError(PsbtError),
+    /// ConsensusError
+    ConsensusError(ConsensusError),
+    /// Transaction not found in wallet
+    TransactionNotFound(Txid),
+    /// UTXO not found in wallet
+    UtxoNotFound(OutPoint),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::ExtractionError(e) => write!(f, "Unable to extract {}", e),
-            Self::InvalidPrivateKey => write!(f, "Invalid private key"),
-            Self::InvalidAddress => write!(f, "Invalid address"),
             Self::InvalidFormat(e) => write!(f, "Only valid for {} format", e),
             Self::InvalidMessage => write!(f, "Message hash is not secure"),
             Self::UnsupportedType => write!(f, "Type is not supported"),
             Self::InvalidPublicKey(e) => write!(f, "Invalid public key {}", e),
             Self::SighashError => write!(f, "Unable to compute signature hash"),
-            Self::Base64DecodeError => write!(f, "Base64 decoding failed"),
             Self::InvalidSignature(e) => write!(f, "Invalid Signature - {}", e),
-            Self::DecodeError(e) => write!(f, "Consensus decode error - {}", e),
             Self::NotSegwitAddress => write!(f, "Not a Segwit address"),
             Self::UnsupportedSegwitVersion(e) => write!(f, "Only Segwit {} is supported", e),
             Self::InvalidSighashType => write!(f, "Sighash type is invalid"),
             Self::InvalidWitness(e) => write!(f, "Invalid Witness - {}", e),
+            Self::SignerError(err) => write!(f, "Signer error: {}", err),
+            Self::IoError(err) => write!(f, "Bitcoin IO Error: {}", err),
+            Self::ExtractTxError(err) => write!(f, "Extract TX Error: {:?}", err),
+            Self::PsbtError(err) => write!(f, "Psbt Error: {:?}", err),
+            Self::ConsensusError(err) => write!(f, "Consensus Error: {:?}", err),
+            Self::TransactionNotFound(err) => write!(f, "Transaction: {:?} not found", err),
+            Self::UtxoNotFound(err) => write!(f, "UTXO: {:?} not found", err),
         }
+    }
+}
+
+impl From<SignerError> for Error {
+    fn from(err: SignerError) -> Self {
+        Error::SignerError(err)
+    }
+}
+
+impl From<IoError> for Error {
+    fn from(err: IoError) -> Self {
+        Error::IoError(err)
+    }
+}
+impl From<ExtractTxError> for Error {
+    fn from(err: ExtractTxError) -> Self {
+        Error::ExtractTxError(Box::new(err))
+    }
+}
+
+impl From<PsbtError> for Error {
+    fn from(err: PsbtError) -> Self {
+        Error::PsbtError(err)
+    }
+}
+impl From<ConsensusError> for Error {
+    fn from(err: ConsensusError) -> Self {
+        Error::ConsensusError(err)
     }
 }
 
