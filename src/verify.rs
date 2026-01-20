@@ -224,7 +224,7 @@ fn verify_message(
         if wp.version() != WitnessVersion::V0 {
             return Err(Error::UnsupportedSegwitVersion("v0".to_string()));
         }
-        verify_p2wsh_single_script(to_sign, &prevouts, address, 0)?
+        verify_p2wsh(to_sign, &prevouts, address, 0)?
     } else if script_pubkey.is_p2tr() {
         let wp = address.witness_program().ok_or(Error::NotSegwitAddress)?;
         if wp.version() != WitnessVersion::V1 {
@@ -276,7 +276,7 @@ fn verify_proof_of_funds(
         } else if script_pubkey.is_p2tr() {
             verify_p2tr(to_sign, &utxo.txout, i, wallet, to_spend)?
         } else if script_pubkey.is_p2wsh() {
-            verify_p2wsh_single_script(to_sign, &utxo.txout, address, i)?
+            verify_p2wsh(to_sign, &utxo.txout, address, i)?
         } else {
             return Err(Error::InvalidFormat(
                 "Unsupported script type for proof of funds".to_string(),
@@ -410,7 +410,7 @@ fn verify_p2wpkh(
 }
 
 /// Verifies P2WSH (Pay-to-Witness-Script-Hash) signature for single-sig scripts.
-fn verify_p2wsh_single_script(
+fn verify_p2wsh(
     to_sign: &Transaction,
     prevout: &TxOut,
     address: &Address,

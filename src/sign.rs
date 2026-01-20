@@ -7,8 +7,7 @@ use crate::{
 };
 use alloc::{string::ToString, vec::Vec};
 
-use bdk_wallet::SignOptions;
-use bdk_wallet::{KeychainKind, Wallet};
+use bdk_wallet::{KeychainKind, SignOptions, Wallet};
 use bitcoin::{
     Address, EcdsaSighashType, OutPoint, Psbt, ScriptBuf, Sequence, TapSighashType, Transaction,
     TxIn, TxOut, Witness,
@@ -254,8 +253,6 @@ fn encode_signature(
 
 #[cfg(test)]
 mod tests {
-    use std::dbg;
-
     use super::*;
     use bdk_wallet::{
         KeychainKind,
@@ -327,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_format_p2wsh_single_script() {
+    fn test_simple_format_p2wsh() {
         let (mut wallet, _) = get_funded_wallet_single(
             "wsh(and_v(v:pk(cVpPVruEDdmutPzisEsYvtST1usBR3ntr8pXSyt6D2YYqXRyPcFW),older(6)))",
         );
@@ -389,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_format_p2wsh_single_script() {
+    fn test_full_format_p2wsh() {
         let (mut wallet, _) = get_funded_wallet_single(
             "wsh(and_v(v:pk(cVpPVruEDdmutPzisEsYvtST1usBR3ntr8pXSyt6D2YYqXRyPcFW),older(6)))",
         );
@@ -467,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_with_proof_of_funds_format_p2wsh_single_script() {
+    fn test_full_with_proof_of_funds_format_p2wsh() {
         const DESCRIPTOR: &str = "wsh(pk(cVpPVruEDdmutPzisEsYvtST1usBR3ntr8pXSyt6D2YYqXRyPcFW))";
 
         let (mut wallet, _) = get_funded_wallet_single(DESCRIPTOR);

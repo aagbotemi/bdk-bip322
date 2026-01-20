@@ -24,8 +24,14 @@ pub use utils::*;
 pub use verify::*;
 
 use crate::Error;
-use alloc::{string::String, vec::Vec};
-use bitcoin::{Address, Amount, OutPoint, Psbt};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+use bitcoin::{
+    Address, Amount, OutPoint, Psbt,
+    base64::{Engine, engine::general_purpose},
+};
 
 /// Represents the different formats supported by the BIP322 message signing protocol.
 ///
@@ -144,4 +150,30 @@ pub enum Bip322Proof {
     Signed(String),
     /// PSBT ready for external signing.
     Psbt(Psbt),
+}
+
+impl Bip322Proof {
+    /// Converts the BIP-322 proof to a base64-encoded string.
+    pub fn to_base64(&self) -> String {
+        match self {
+            // Signed proofs are already in base64 format, just return the string
+            Bip322Proof::Signed(s) => s.clone(),
+            // For PSBT proofs, serialize and encode to base64
+            Bip322Proof::Psbt(psbt) => general_purpose::STANDARD.encode(psbt.serialize()),
+        }
+    }
+
+    /// Parses a base64-encoded string into a [`Bip322Proof`].
+    pub fn from_base64(s: &str) -> Result<Self, Error> {
+        // Try to decode as PSBT first - this handles the Full and FullProofOfFunds formats
+        if let Ok(bytes) = general_purpose::STANDARD.decode(s) {
+            if let Ok(psbt) = Psbt::deserialize(&bytes) {
+                return Ok(Bip322Proof::Psbt(psbt));
+            }
+        }
+
+        // Otherwise, treat it as a signed proof (Legacy or Simple format)
+        // The string is already base64 encoded, so we store it as-is
+        Ok(Bip322Proof::Signed(s.to_string()))
+    }
 }
