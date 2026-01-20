@@ -40,7 +40,7 @@ pub enum SignatureFormat {
     /// Full BIP-322 format with complete transaction data.
     Full,
     /// The Full BIP322 format with Proof-of-funds(utxo) capabiility.
-    FullWithProofOfFunds,
+    FullProofOfFunds,
 }
 
 /// Main trait providing BIP-322 signing and verification functionality.
@@ -86,7 +86,7 @@ pub trait BIP322 {
     /// * `message` - The message to sign (as UTF-8 text)
     /// * `signature_type` - The signature format to use
     /// * `address` - The address to sign with (must be owned by wallet)
-    /// * `utxos` - Optional list of specific UTXOs for proof-of-funds (only for `FullWithProofOfFunds`)
+    /// * `utxos` - Optional list of specific UTXOs for proof-of-funds (only for `FullProofOfFunds`)
     ///
     /// # Returns
     ///
@@ -124,9 +124,9 @@ pub trait BIP322 {
 pub struct Bip322VerificationResult {
     /// Whether the signature is valid for the given message and address
     pub valid: bool,
-    /// The total amount proven for FullWithProofOfFunds signatures.
+    /// The total amount proven for FullProofOfFunds signatures.
     ///
-    /// This is `Some` only when using `FullWithProofOfFunds` format and
+    /// This is `Some` only when using `FullProofOfFunds` format and
     /// additional UTXOs were included in the signature. For other formats,
     /// this will always be `None`.
     pub proven_amount: Option<Amount>,

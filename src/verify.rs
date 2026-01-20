@@ -125,12 +125,12 @@ pub fn verify_signed_proof(
                 proven_amount: None,
             })
         }
-        SignatureFormat::FullWithProofOfFunds => {
+        SignatureFormat::FullProofOfFunds => {
             let tx = Transaction::consensus_decode_from_finite_reader(&mut cursor)?;
             // Validate transaction has proof-of-funds inputs
             if tx.input.len() < 2 {
                 return Err(Error::InvalidFormat(
-                    "FullWithProofOfFunds requires at least 2 inputs".to_string(),
+                    "FullProofOfFunds requires at least 2 inputs".to_string(),
                 ));
             }
 
@@ -237,7 +237,7 @@ fn verify_message(
     };
 
     // For proof-of-funds, verify all additional inputs
-    if signature_type == SignatureFormat::FullWithProofOfFunds {
+    if signature_type == SignatureFormat::FullProofOfFunds {
         return verify_proof_of_funds(wallet, to_sign, script_pubkey, &to_spend, address);
     }
 
@@ -254,7 +254,7 @@ fn verify_proof_of_funds(
 ) -> Result<bool, Error> {
     if to_sign.input.len() < 2 {
         return Err(Error::InvalidFormat(
-            "FullWithProofOfFunds requires at least 2 inputs".to_string(),
+            "FullProofOfFunds requires at least 2 inputs".to_string(),
         ));
     }
 

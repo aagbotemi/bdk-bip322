@@ -34,11 +34,11 @@ impl BIP322 for Wallet {
         let mut to_sign = to_sign(&to_spend)?;
 
         // Handle proof-of-funds by adding additional inputs
-        if signature_type == SignatureFormat::FullWithProofOfFunds {
+        if signature_type == SignatureFormat::FullProofOfFunds {
             add_proof_of_funds_inputs(&mut to_sign, self, &script_pubkey, utxos)?;
         } else if utxos.is_some() {
             return Err(Error::InvalidFormat(
-                "UTXOs parameter only supported for FullWithProofOfFunds format".to_string(),
+                "UTXOs parameter only supported for FullProofOfFunds format".to_string(),
             ));
         }
 
@@ -242,7 +242,7 @@ fn encode_signature(
             let simple_signature = general_purpose::STANDARD.encode(&buffer);
             Ok(Bip322Proof::Signed(simple_signature))
         }
-        SignatureFormat::Full | SignatureFormat::FullWithProofOfFunds => {
+        SignatureFormat::Full | SignatureFormat::FullProofOfFunds => {
             let tx = psbt.clone().extract_tx()?;
 
             tx.consensus_encode(&mut buffer)?;
@@ -254,6 +254,8 @@ fn encode_signature(
 
 #[cfg(test)]
 mod tests {
+    use std::dbg;
+
     use super::*;
     use bdk_wallet::{
         KeychainKind,
@@ -422,7 +424,7 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullProofOfFunds;
 
         let sign = wallet
             .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
@@ -451,7 +453,7 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullProofOfFunds;
 
         let sign = wallet
             .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
@@ -479,7 +481,7 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullProofOfFunds;
 
         let sign = wallet
             .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
@@ -508,7 +510,7 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullProofOfFunds;
 
         let sign = wallet
             .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
