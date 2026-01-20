@@ -1,67 +1,71 @@
-# bdk‑bip322
+# `bdk‑bip322`
 
-A Rust library implementing the [BIP‑322 Generic Signed Message Format](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki) for Bitcoin, proving fund availabilty without actually moving them or commiting to a message. 
+**Note:** This is an experimental crate exploring a descriptor-based implementation of BIP-322 within the Bitcoin Dev Kit (BDK) ecosystem.
+
+A Rust library implementing the [BIP‑322: Generic Signed Message Format](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki) for Bitcoin, built on top of the Bitcoin Dev Kit (BDK) ecosystem.
+
+`bdk-bip322` enables cryptographic proof of control over Bitcoin addresses and
+funds without moving coins or broadcasting transactions, while securely
+committing to arbitrary messages.
 
 ## Overview
-BIP-322 provides a standardized way to sign arbitrary messages with Bitcoin addresses, allowing users to cryptographically prove they control the private keys associated with specific Bitcoin addresses without creating transactions. This is particularly useful for:
-- Verifying ownership of funds to exchanges or other parties
-- Proving reserves by businesses or custodians
-- Authenticating identity in Bitcoin-based applications
-- Validating control of addresses in disputes or support cases
+BIP-322 defines a standardized, script-agnostic mechanism for signing and
+verifying messages with Bitcoin addresses. Unlike legacy `signmessage`,
+BIP-322 works across modern script types (SegWit, Taproot) and enables advanced use cases such as proof-of-funds.
+
+This library provides a **descriptor-based, wallet-native** implementation of
+BIP-322, designed for seamless integration with `bdk_wallet`.
+
+### Common use cases
+- Proving ownership of Bitcoin addresses
+- Cryptographic proof of reserves or funds
+- User authentication in Bitcoin-based applications
+- Verifying control of addresses for support or dispute resolution
+- Hardware-wallet compatible message signing via PSBTs
 
 ## Integration
 Designed to integrate with the [Bitcoin Dev Kit](https://bitcoindevkit.org/) ecosystem: 
-- **bdk‑wallet** for key derivation and database‑backed wallets.
+- **bdk‑wallet** — descriptor-based wallets, key management, and persistence.
+- **PSBT-based workflows** — compatible with hardware and air-gapped signers
+No private keys or WIFs are passed directly to this library.
 
 ## Minimum Supported Rust Version (MSRV)
-This library should compile with any combination of features with Rust 1.75.0 or newer.
+This crate supports **Rust 1.85.0 or newer** across all feature combinations.
 
-
-## Features
+## Supported Signature Formats
 
 - **Legacy**: Original P2PKH `signmessage`/`verifymessage` compatibility  
 - **Simple**: SegWit‑only witness stack format  
 - **Full**: Complete PSBT/transaction‑based format (any script, including Taproot)  
-- **Proof of Funds**: Include additional UTXO inputs to prove control over funds 
+- **FullProofOfFunds**: Extends Full format with additional UTXO inputs to prove fund ownership.
 
+## Usage
+### Signing a Message
+```rs
+use bdk_wallet::{Wallet, KeychainKind};
+use bdk_bip322::{BIP322, SignatureFormat};
 
-## Real‑World Examples
-See the [examples/](/examples) folder for end‑to‑end demos:
+// `wallet` is already created and synced
+let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-1. Legacy: Sign & verify a P2PKH address with SignatureFormat::Legacy
-```bash
-cargo run --example sign_verify_legacy
+let proof = wallet.sign_bip322(
+    "Hello Bitcoin",
+    SignatureFormat::Simple,
+    &address,
+    None,
+)?;
 ```
+### Verifying a Signature
+```rs
+let result = wallet.verify_bip322(
+    &proof,
+    "Hello Bitcoin",
+    SignatureFormat::Simple,
+    &address,
+)?;
 
-2. Simple: Sign & verify an address with SignatureFormat::Simple
-```bash
-cargo run --example sign_verify_simple
+assert!(result.valid);
 ```
-
-3. Full: Sign & verify an address with SignatureFormat::Full
-```bash
-cargo run --example sign_verify_full
-```
-
-## API Reference
-- **Signer::new(priv_wif, message, address, format, proof_of_funds)**:
-Build a signer for any BIP‑322 format.
-
-- **signer.sign() -> Result<String>**:
-Produce a Base64‑encoded signature.
-
-- **Verifier::new(address, signature, message, format, priv_wif_opt)**:
-Build a verifier (for Legacy, you must supply the WIF).
-
-- **verifier.verify() -> Result<bool>**:
-Returns true if the signature is valid.
 
 ## Contributing
 Found a bug, have an issue or a feature request? Feel free to open an issue on GitHub.
-- Fork the repo
-
-- Create a feature branch
-
-- Open a pull request
-
-Please follow the existing code style, run `cargo fmt` and `cargo clippy`, and include tests for new functionality.

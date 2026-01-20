@@ -1,40 +1,27 @@
 //! The utility methods for BIP-322 for message signing
 //! according to the BIP-322 standard.
-use alloc::vec;
+use alloc::{string::ToString, vec};
 
 use bitcoin::{
+    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
     absolute::LockTime,
-    hashes::{sha256, Hash, HashEngine},
-    opcodes::{all::OP_RETURN, OP_0},
+    hashes::{Hash, HashEngine, sha256},
+    opcodes::{OP_0, all::OP_RETURN},
     script::Builder,
     secp256k1::{All, Secp256k1},
     transaction::Version,
-    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 
 use crate::Error;
 
-/// Represents the different formats supported by the BIP322 message signing protocol.
-///
-/// BIP322 defines multiple formats for signatures to accommodate different use cases
-/// and maintain backward compatibility with legacy signing methods.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SignatureFormat {
-    /// A simplified version of the BIP322 format that includes only essential data.
-    Simple,
-    /// The Full BIP322 format that includes all signature data.
-    Full,
-    /// The Full BIP322 format with Proof-of-funds(utxo)
-    FullWithProofOfFunds,
-}
-
-const TAG: &str = "BIP0322-signed-message";
+/// The tag used for BIP-322 message hashing according to BIP-340 tagged hashes
+pub const BIP322_TAG: &str = "BIP0322-signed-message";
 
 /// Creates a tagged hash of a message according to the BIP322 specification.
 pub fn tagged_message_hash(message: &[u8]) -> sha256::Hash {
     let mut engine = sha256::Hash::engine();
 
-    let tag_hash = sha256::Hash::hash(TAG.as_bytes());
+    let tag_hash = sha256::Hash::hash(BIP322_TAG.as_bytes());
     engine.input(&tag_hash[..]);
     engine.input(&tag_hash[..]);
     engine.input(message);
@@ -42,6 +29,7 @@ pub fn tagged_message_hash(message: &[u8]) -> sha256::Hash {
     sha256::Hash::from_engine(engine)
 }
 
+/// Creates the virtual "to_spend" transaction for BIP-322.
 pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
     let message_hash = tagged_message_hash(message.as_bytes());
     let script_sig = Builder::new()
@@ -65,11 +53,8 @@ pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
     }
 }
 
+/// Creates the virtual "to_sign" transaction for BIP-322.
 pub fn to_sign(to_spend: &Transaction) -> Result<Transaction, Error> {
-    if to_spend.output.len() != 1 {
-        // return Err(Error::InvalidToSpendTransaction);
-    }
-
     let outpoint = OutPoint {
         txid: to_spend.compute_txid(),
         vout: 0x00,
@@ -93,14 +78,42 @@ pub fn to_sign(to_spend: &Transaction) -> Result<Transaction, Error> {
     Ok(tx)
 }
 
+/// Secp256k1 context type used throughout the crate
 pub(crate) type SecpCtx = Secp256k1<All>;
+
+/// Validates witness structure matches the script type.
+pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<(), Error> {
+    if witness.is_empty() {
+        return Err(Error::InvalidFormat("Empty witness".to_string()));
+    }
+
+    if script_pubkey.is_p2wpkh() && witness.len() != 2 {
+        return Err(Error::InvalidFormat(
+            "P2WPKH requires exactly 2 witness elements".to_string(),
+        ));
+    } else if script_pubkey.is_p2tr() && witness.is_empty() {
+        return Err(Error::InvalidFormat(
+            "P2TR requires at least 1 witness element".to_string(),
+        ));
+    } else if script_pubkey.is_p2wsh() && witness.len() < 2 {
+        return Err(Error::InvalidFormat(
+            "P2WSH requires at least 2 witness elements".to_string(),
+        ));
+    } else if !(script_pubkey.is_p2wpkh() || script_pubkey.is_p2wsh() || script_pubkey.is_p2tr()) {
+        return Err(Error::InvalidFormat(
+            "Simple format only supports P2WPKH, P2WSH, or P2TR script types".to_string(),
+        ));
+    }
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use alloc::string::ToString;
     use bitcoin::Address;
     use core::str::FromStr;
-
-    use super::*;
 
     const HELLO_WORLD_MESSAGE: &str = "Hello World";
     const SEGWIT_ADDRESS: &str = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
@@ -142,32 +155,17 @@ mod tests {
         );
 
         // Test case for empty message - to_sign
-        // let tx_sign_empty_msg = to_sign(
-        //     &tx_spend_empty_msg.output[0].script_pubkey,
-        //     tx_spend_empty_msg.compute_txid(),
-        //     tx_spend_empty_msg.lock_time,
-        //     tx_spend_empty_msg.input[0].sequence,
-        //     Some(tx_spend_empty_msg.input[0].witness.clone()),
-        // )
-        // .unwrap();
-        // assert_eq!(
-        //     tx_sign_empty_msg.unsigned_tx.compute_txid().to_string(),
-        //     "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
-        // );
+        let tx_sign_empty_msg = to_sign(&tx_spend_empty_msg).unwrap();
+        assert_eq!(
+            tx_sign_empty_msg.compute_txid().to_string(),
+            "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
+        );
 
-        // // Test case for HELLO_WORLD_MESSAGE - to_sign
-        // let tx_sign_hw_msg = to_sign(
-        //     &tx_spend_hello_world_msg.output[0].script_pubkey,
-        //     tx_spend_hello_world_msg.compute_txid(),
-        //     tx_spend_hello_world_msg.lock_time,
-        //     tx_spend_hello_world_msg.input[0].sequence,
-        //     Some(tx_spend_hello_world_msg.input[0].witness.clone()),
-        // )
-        // .unwrap();
-
-        // assert_eq!(
-        //     tx_sign_hw_msg.unsigned_tx.compute_txid().to_string(),
-        //     "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"
-        // );
+        // Test case for HELLO_WORLD_MESSAGE - to_sign
+        let tx_sign_hw_msg = to_sign(&tx_spend_hello_world_msg).unwrap();
+        assert_eq!(
+            tx_sign_hw_msg.compute_txid().to_string(),
+            "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"
+        );
     }
 }
