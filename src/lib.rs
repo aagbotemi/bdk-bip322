@@ -84,7 +84,7 @@ pub trait BIP322 {
     /// # Arguments
     ///
     /// * `message` - The message to sign (as UTF-8 text)
-    /// * `sig_type` - The signature format to use
+    /// * `signature_type` - The signature format to use
     /// * `address` - The address to sign with (must be owned by wallet)
     /// * `utxos` - Optional list of specific UTXOs for proof-of-funds (only for `FullWithProofOfFunds`)
     ///
@@ -94,7 +94,7 @@ pub trait BIP322 {
     fn sign_bip322(
         &mut self,
         message: &str,
-        sig_type: SignatureFormat,
+        signature_type: SignatureFormat,
         address: &Address,
         utxos: Option<Vec<OutPoint>>,
     ) -> Result<Bip322Proof, Error>;
@@ -105,7 +105,7 @@ pub trait BIP322 {
     ///
     /// * `proof` - The signature proof to verify
     /// * `message` - The original message that was signed
-    /// * `sig_type` - The signature format used
+    /// * `signature_type` - The signature format used
     /// * `address` - The address that supposedly signed the message
     ///
     /// # Returns
@@ -115,7 +115,7 @@ pub trait BIP322 {
         &mut self,
         proof: &Bip322Proof,
         message: &str,
-        sig_type: SignatureFormat,
+        signature_type: SignatureFormat,
         address: &Address,
     ) -> Result<Bip322VerificationResult, Error>;
 }

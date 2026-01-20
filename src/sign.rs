@@ -23,7 +23,7 @@ impl BIP322 for Wallet {
     fn sign_bip322(
         &mut self,
         message: &str,
-        sig_type: SignatureFormat,
+        signature_type: SignatureFormat,
         address: &Address,
         utxos: Option<Vec<OutPoint>>,
     ) -> Result<Bip322Proof, Error> {
@@ -34,7 +34,7 @@ impl BIP322 for Wallet {
         let mut to_sign = to_sign(&to_spend)?;
 
         // Handle proof-of-funds by adding additional inputs
-        if sig_type == SignatureFormat::FullWithProofOfFunds {
+        if signature_type == SignatureFormat::FullWithProofOfFunds {
             add_proof_of_funds_inputs(&mut to_sign, self, &script_pubkey, utxos)?;
         } else if utxos.is_some() {
             return Err(Error::InvalidFormat(
@@ -54,7 +54,7 @@ impl BIP322 for Wallet {
         let finalized = self.sign(&mut psbt, sign_options)?;
 
         if finalized {
-            encode_signature(&psbt, sig_type, &script_pubkey)
+            encode_signature(&psbt, signature_type, &script_pubkey)
         } else {
             Ok(Bip322Proof::Psbt(psbt))
         }
@@ -64,14 +64,14 @@ impl BIP322 for Wallet {
         &mut self,
         proof: &Bip322Proof,
         message: &str,
-        sig_type: SignatureFormat,
+        signature_type: SignatureFormat,
         address: &Address,
     ) -> Result<Bip322VerificationResult, Error> {
         let script_pubkey = address.script_pubkey();
 
         match proof {
             Bip322Proof::Signed(tx) => {
-                verify_signed_proof(self, message, sig_type, address, &script_pubkey, tx)
+                verify_signed_proof(self, message, signature_type, address, &script_pubkey, tx)
             }
             Bip322Proof::Psbt(psbt) => verify_psbt_proof(psbt, script_pubkey),
         }
@@ -203,12 +203,12 @@ fn configure_psbt_inputs(
 /// as a base64 string.
 fn encode_signature(
     psbt: &Psbt,
-    sig_type: SignatureFormat,
+    signature_type: SignatureFormat,
     script_pubkey: &ScriptBuf,
 ) -> Result<Bip322Proof, Error> {
     let mut buffer = Vec::new();
 
-    match sig_type {
+    match signature_type {
         SignatureFormat::Legacy => {
             if !script_pubkey.is_p2pkh() {
                 return Err(Error::InvalidFormat(
@@ -269,14 +269,14 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Legacy;
+        let signature_type = SignatureFormat::Legacy;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -290,14 +290,14 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Simple;
+        let signature_type = SignatureFormat::Simple;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -311,14 +311,14 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Simple;
+        let signature_type = SignatureFormat::Simple;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -331,14 +331,14 @@ mod tests {
         );
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Simple;
+        let signature_type = SignatureFormat::Simple;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -352,14 +352,14 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Full;
+        let signature_type = SignatureFormat::Full;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -373,14 +373,14 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Full;
+        let signature_type = SignatureFormat::Full;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -393,14 +393,14 @@ mod tests {
         );
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let sig_type = SignatureFormat::Full;
+        let signature_type = SignatureFormat::Full;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, None)
+            .sign_bip322("HELLO WORLD", signature_type, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -422,14 +422,14 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let sig_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullWithProofOfFunds;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, Some(utxos))
+            .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -451,14 +451,14 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let sig_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullWithProofOfFunds;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, Some(utxos))
+            .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -479,14 +479,14 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let sig_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullWithProofOfFunds;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, Some(utxos))
+            .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -508,14 +508,14 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let sig_type = SignatureFormat::FullWithProofOfFunds;
+        let signature_type = SignatureFormat::FullWithProofOfFunds;
 
         let sign = wallet
-            .sign_bip322("HELLO WORLD", sig_type, &address, Some(utxos))
+            .sign_bip322("HELLO WORLD", signature_type, &address, Some(utxos))
             .unwrap();
 
         let verify = wallet
-            .verify_bip322(&sign, "HELLO WORLD", sig_type, &address)
+            .verify_bip322(&sign, "HELLO WORLD", signature_type, &address)
             .unwrap();
 
         assert!(verify.valid);

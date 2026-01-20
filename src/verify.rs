@@ -65,7 +65,7 @@ pub fn verify_psbt_proof(
 pub fn verify_signed_proof(
     wallet: &mut Wallet,
     message: &str,
-    sig_type: SignatureFormat,
+    signature_type: SignatureFormat,
     address: &Address,
     script_pubkey: &ScriptBuf,
     tx: &String,
@@ -80,7 +80,7 @@ pub fn verify_signed_proof(
 
     let mut cursor = bitcoin::io::Cursor::new(&signature_bytes);
 
-    match sig_type {
+    match signature_type {
         SignatureFormat::Legacy => {
             let verification_result = verify_legacy(&signature_bytes, message)?;
 
@@ -95,8 +95,14 @@ pub fn verify_signed_proof(
 
             to_sign.input[0].witness = witness;
 
-            let verification_result =
-                verify_message(wallet, address, &to_sign, to_spend, script_pubkey, sig_type)?;
+            let verification_result = verify_message(
+                wallet,
+                address,
+                &to_sign,
+                to_spend,
+                script_pubkey,
+                signature_type,
+            )?;
 
             Ok(Bip322VerificationResult {
                 valid: verification_result,
@@ -105,8 +111,14 @@ pub fn verify_signed_proof(
         }
         SignatureFormat::Full => {
             let tx = Transaction::consensus_decode_from_finite_reader(&mut cursor)?;
-            let verification_result =
-                verify_message(wallet, address, &tx, to_spend, script_pubkey, sig_type)?;
+            let verification_result = verify_message(
+                wallet,
+                address,
+                &tx,
+                to_spend,
+                script_pubkey,
+                signature_type,
+            )?;
 
             Ok(Bip322VerificationResult {
                 valid: verification_result,
@@ -135,8 +147,14 @@ pub fn verify_signed_proof(
                 }
             }
 
-            let verification_result =
-                verify_message(wallet, address, &tx, to_spend, script_pubkey, sig_type)?;
+            let verification_result = verify_message(
+                wallet,
+                address,
+                &tx,
+                to_spend,
+                script_pubkey,
+                signature_type,
+            )?;
 
             let total_amount: Amount = tx
                 .input
@@ -171,7 +189,7 @@ fn verify_message(
     to_sign: &Transaction,
     to_spend: Transaction,
     script_pubkey: &ScriptBuf,
-    sig_type: SignatureFormat,
+    signature_type: SignatureFormat,
 ) -> Result<bool, Error> {
     // Verify to_sign spends to_spend
     let to_spend_outpoint = OutPoint {
@@ -219,7 +237,7 @@ fn verify_message(
     };
 
     // For proof-of-funds, verify all additional inputs
-    if sig_type == SignatureFormat::FullWithProofOfFunds {
+    if signature_type == SignatureFormat::FullWithProofOfFunds {
         return verify_proof_of_funds(wallet, to_sign, script_pubkey, &to_spend, address);
     }
 
