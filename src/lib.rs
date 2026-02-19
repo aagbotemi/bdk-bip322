@@ -65,7 +65,7 @@ pub enum SignatureFormat {
 /// let address = wallet.peek_address(KeychainKind::External, 0).address;
 ///
 /// // Sign a message
-/// let proof = wallet.sign_bip322(
+/// let proof = wallet.sign_message(
 ///     "Hello Bitcoin",
 ///     SignatureFormat::Simple,
 ///     &address,
@@ -73,7 +73,7 @@ pub enum SignatureFormat {
 /// )?;
 ///
 /// // Verify the signature
-/// let result = wallet.verify_bip322(
+/// let result = wallet.verify_message(
 ///     &proof,
 ///     "Hello Bitcoin",
 ///     SignatureFormat::Simple,
@@ -97,13 +97,13 @@ pub trait BIP322 {
     /// # Returns
     ///
     /// Returns either a complete signature or a PSBT for external signing or [`Error`] when there's an error
-    fn sign_bip322(
+    fn sign_message(
         &mut self,
         message: &str,
         signature_type: SignatureFormat,
         address: &Address,
         utxos: Option<Vec<OutPoint>>,
-    ) -> Result<Bip322Proof, Error>;
+    ) -> Result<MessageProof, Error>;
 
     /// Verify a BIP-322 message signature.
     ///
@@ -117,17 +117,17 @@ pub trait BIP322 {
     /// # Returns
     ///
     /// Returns verification result with validity and optional proven amount or [`Error`] when there's an error
-    fn verify_bip322(
+    fn verify_message(
         &mut self,
-        proof: &Bip322Proof,
+        proof: &MessageProof,
         message: &str,
         signature_type: SignatureFormat,
         address: &Address,
-    ) -> Result<Bip322VerificationResult, Error>;
+    ) -> Result<MessageVerificationResult, Error>;
 }
 
 /// Result of a BIP-322 signature verification.
-pub struct Bip322VerificationResult {
+pub struct MessageVerificationResult {
     /// Whether the signature is valid for the given message and address
     pub valid: bool,
     /// The total amount proven for FullProofOfFunds signatures.
@@ -143,7 +143,7 @@ pub struct Bip322VerificationResult {
 /// Signing can result in either a complete signature (when the wallet has
 /// private keys) or a PSBT ready for external signing (e.g., hardware wallets).
 #[derive(Debug)]
-pub enum Bip322Proof {
+pub enum MessageProof {
     /// Signature was created successfully.
     ///
     /// Contains the base64-encoded signature string ready for sharing.
@@ -152,28 +152,28 @@ pub enum Bip322Proof {
     Psbt(Psbt),
 }
 
-impl Bip322Proof {
+impl MessageProof {
     /// Converts the BIP-322 proof to a base64-encoded string.
     pub fn to_base64(&self) -> String {
         match self {
             // Signed proofs are already in base64 format, just return the string
-            Bip322Proof::Signed(s) => s.clone(),
+            MessageProof::Signed(s) => s.clone(),
             // For PSBT proofs, serialize and encode to base64
-            Bip322Proof::Psbt(psbt) => general_purpose::STANDARD.encode(psbt.serialize()),
+            MessageProof::Psbt(psbt) => general_purpose::STANDARD.encode(psbt.serialize()),
         }
     }
 
-    /// Parses a base64-encoded string into a [`Bip322Proof`].
+    /// Parses a base64-encoded string into a [`MessageProof`].
     pub fn from_base64(s: &str) -> Result<Self, Error> {
         // Try to decode as PSBT first - this handles the Full and FullProofOfFunds formats
         if let Ok(bytes) = general_purpose::STANDARD.decode(s) {
             if let Ok(psbt) = Psbt::deserialize(&bytes) {
-                return Ok(Bip322Proof::Psbt(psbt));
+                return Ok(MessageProof::Psbt(psbt));
             }
         }
 
         // Otherwise, treat it as a signed proof (Legacy or Simple format)
         // The string is already base64 encoded, so we store it as-is
-        Ok(Bip322Proof::Signed(s.to_string()))
+        Ok(MessageProof::Signed(s.to_string()))
     }
 }

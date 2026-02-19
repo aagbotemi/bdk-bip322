@@ -8,7 +8,6 @@ use bitcoin::{
     hashes::{Hash, HashEngine, sha256},
     opcodes::{OP_0, all::OP_RETURN},
     script::Builder,
-    secp256k1::{All, Secp256k1},
     transaction::Version,
 };
 
@@ -16,6 +15,12 @@ use crate::Error;
 
 /// The tag used for BIP-322 message hashing according to BIP-340 tagged hashes
 pub const BIP322_TAG: &str = "BIP0322-signed-message";
+
+/// The lengths of various components in the BIP-322 message signing protocol.
+pub const SCRIPT_SIG_LEN: usize = 106;
+pub const SIG_LEN: usize = 71;
+pub const SIG_WITHOUT_SIGHASH_LEN: usize = 70;
+pub const PUBKEY_LEN: usize = 33;
 
 /// Creates a tagged hash of a message according to the BIP322 specification.
 pub fn tagged_message_hash(message: &[u8]) -> sha256::Hash {
@@ -54,14 +59,14 @@ pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
 }
 
 /// Creates the virtual "to_sign" transaction for BIP-322.
-pub fn to_sign(to_spend: &Transaction) -> Result<Transaction, Error> {
+pub fn to_sign(to_spend: &Transaction) -> Transaction {
     let outpoint = OutPoint {
         txid: to_spend.compute_txid(),
         vout: 0x00,
     };
     let script_pub_key = Builder::new().push_opcode(OP_RETURN).into_script();
 
-    let tx = Transaction {
+    Transaction {
         version: Version(0),
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
@@ -74,12 +79,8 @@ pub fn to_sign(to_spend: &Transaction) -> Result<Transaction, Error> {
             value: Amount::ZERO,
             script_pubkey: script_pub_key,
         }],
-    };
-    Ok(tx)
+    }
 }
-
-/// Secp256k1 context type used throughout the crate
-pub(crate) type SecpCtx = Secp256k1<All>;
 
 /// Validates witness structure matches the script type.
 pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<(), Error> {
@@ -90,10 +91,6 @@ pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<
     if script_pubkey.is_p2wpkh() && witness.len() != 2 {
         return Err(Error::InvalidFormat(
             "P2WPKH requires exactly 2 witness elements".to_string(),
-        ));
-    } else if script_pubkey.is_p2tr() && witness.is_empty() {
-        return Err(Error::InvalidFormat(
-            "P2TR requires at least 1 witness element".to_string(),
         ));
     } else if script_pubkey.is_p2wsh() && witness.len() < 2 {
         return Err(Error::InvalidFormat(
@@ -155,14 +152,14 @@ mod tests {
         );
 
         // Test case for empty message - to_sign
-        let tx_sign_empty_msg = to_sign(&tx_spend_empty_msg).unwrap();
+        let tx_sign_empty_msg = to_sign(&tx_spend_empty_msg);
         assert_eq!(
             tx_sign_empty_msg.compute_txid().to_string(),
             "1e9654e951a5ba44c8604c4de6c67fd78a27e81dcadcfe1edf638ba3aaebaed6"
         );
 
         // Test case for HELLO_WORLD_MESSAGE - to_sign
-        let tx_sign_hw_msg = to_sign(&tx_spend_hello_world_msg).unwrap();
+        let tx_sign_hw_msg = to_sign(&tx_spend_hello_world_msg);
         assert_eq!(
             tx_sign_hw_msg.compute_txid().to_string(),
             "88737ae86f2077145f93cc4b153ae9a1cb8d56afa511988c149c5c8c9d93bddf"

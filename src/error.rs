@@ -21,8 +21,6 @@ pub enum Error {
     InvalidFormat(String),
     /// The message does not meet requirements
     InvalidMessage,
-    /// The script or address type is not supported
-    UnsupportedType,
     /// The provided public key is invalid
     InvalidPublicKey(String),
     /// Unable to compute the signature hash for signing
@@ -56,9 +54,8 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::InvalidFormat(e) => write!(f, "Only valid for {} format", e),
+            Self::InvalidFormat(e) => write!(f, "Invalid format: {}", e),
             Self::InvalidMessage => write!(f, "Message hash is not secure"),
-            Self::UnsupportedType => write!(f, "Type is not supported"),
             Self::InvalidPublicKey(e) => write!(f, "Invalid public key {}", e),
             Self::SighashError => write!(f, "Unable to compute signature hash"),
             Self::InvalidSignature(e) => write!(f, "Invalid Signature - {}", e),
@@ -68,11 +65,11 @@ impl fmt::Display for Error {
             Self::InvalidWitness(e) => write!(f, "Invalid Witness - {}", e),
             Self::SignerError(err) => write!(f, "Signer error: {}", err),
             Self::IoError(err) => write!(f, "Bitcoin IO Error: {}", err),
-            Self::ExtractTxError(err) => write!(f, "Extract TX Error: {:?}", err),
-            Self::PsbtError(err) => write!(f, "Psbt Error: {:?}", err),
-            Self::ConsensusError(err) => write!(f, "Consensus Error: {:?}", err),
-            Self::TransactionNotFound(err) => write!(f, "Transaction: {:?} not found", err),
-            Self::UtxoNotFound(err) => write!(f, "UTXO: {:?} not found", err),
+            Self::ExtractTxError(err) => write!(f, "Extract TX Error: {}", err),
+            Self::PsbtError(err) => write!(f, "Psbt Error: {}", err),
+            Self::ConsensusError(err) => write!(f, "Consensus Error: {}", err),
+            Self::TransactionNotFound(err) => write!(f, "Transaction not found: {}", err),
+            Self::UtxoNotFound(err) => write!(f, "UTXO not found: {}", err),
         }
     }
 }
@@ -88,6 +85,7 @@ impl From<IoError> for Error {
         Error::IoError(err)
     }
 }
+
 impl From<ExtractTxError> for Error {
     fn from(err: ExtractTxError) -> Self {
         Error::ExtractTxError(Box::new(err))
@@ -99,6 +97,7 @@ impl From<PsbtError> for Error {
         Error::PsbtError(err)
     }
 }
+
 impl From<ConsensusError> for Error {
     fn from(err: ConsensusError) -> Self {
         Error::ConsensusError(err)
