@@ -43,13 +43,13 @@ pub enum SignatureFormat {
     Legacy,
     /// A simplified version of the BIP322 format that includes only essential data.
     Simple,
-    /// Full BIP-322 format with complete transaction data.
+    /// Full BIP322 format with complete transaction data.
     Full,
     /// The Full BIP322 format with Proof-of-funds(utxo) capabiility.
     FullProofOfFunds,
 }
 
-/// Main trait providing BIP-322 signing and verification functionality.
+/// Main trait providing BIP322 signing and verification functionality.
 ///
 /// This trait is implemented for `bdk_wallet::Wallet` to provide seamless
 /// integration with BDK wallets.
@@ -85,7 +85,7 @@ pub enum SignatureFormat {
 /// # }
 /// ```
 pub trait BIP322 {
-    /// Sign a message for a specific address using BIP-322.
+    /// Sign a message for a specific address using BIP322.
     ///
     /// # Arguments
     ///
@@ -105,7 +105,7 @@ pub trait BIP322 {
         utxos: Option<Vec<OutPoint>>,
     ) -> Result<MessageProof, Error>;
 
-    /// Verify a BIP-322 message signature.
+    /// Verify a BIP322 message signature.
     ///
     /// # Arguments
     ///
@@ -118,7 +118,7 @@ pub trait BIP322 {
     ///
     /// Returns verification result with validity and optional proven amount or [`Error`] when there's an error
     fn verify_message(
-        &mut self,
+        &self,
         proof: &MessageProof,
         message: &str,
         signature_type: SignatureFormat,
@@ -126,19 +126,18 @@ pub trait BIP322 {
     ) -> Result<MessageVerificationResult, Error>;
 }
 
-/// Result of a BIP-322 signature verification.
+/// Result of a BIP322 signature verification.
 pub struct MessageVerificationResult {
     /// Whether the signature is valid for the given message and address
     pub valid: bool,
     /// The total amount proven for FullProofOfFunds signatures.
     ///
     /// This is `Some` only when using `FullProofOfFunds` format and
-    /// additional UTXOs were included in the signature. For other formats,
-    /// this will always be `None`.
+    /// additional UTXOs were included. For other formats, always `None`.
     pub proven_amount: Option<Amount>,
 }
 
-/// Result of a BIP-322 signing operation.
+/// Result of a BIP322 signing operation.
 ///
 /// Signing can result in either a complete signature (when the wallet has
 /// private keys) or a PSBT ready for external signing (e.g., hardware wallets).
@@ -153,7 +152,7 @@ pub enum MessageProof {
 }
 
 impl MessageProof {
-    /// Converts the BIP-322 proof to a base64-encoded string.
+    /// Converts the BIP322 proof to a base64-encoded string.
     pub fn to_base64(&self) -> String {
         match self {
             // Signed proofs are already in base64 format, just return the string

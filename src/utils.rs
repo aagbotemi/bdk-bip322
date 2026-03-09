@@ -1,13 +1,13 @@
 //! The utility methods for BIP-322 for message signing
 //! according to the BIP-322 standard.
-use alloc::{string::ToString, vec};
+use alloc::{string::ToString, vec::Vec};
 
 use bitcoin::{
-    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
     absolute::LockTime,
     hashes::{Hash, HashEngine, sha256},
     opcodes::{OP_0, all::OP_RETURN},
-    script::Builder,
+    script::{Builder, Instruction},
     transaction::Version,
 };
 
@@ -15,12 +15,6 @@ use crate::Error;
 
 /// The tag used for BIP-322 message hashing according to BIP-340 tagged hashes
 pub const BIP322_TAG: &str = "BIP0322-signed-message";
-
-/// The lengths of various components in the BIP-322 message signing protocol.
-pub const SCRIPT_SIG_LEN: usize = 106;
-pub const SIG_LEN: usize = 71;
-pub const SIG_WITHOUT_SIGHASH_LEN: usize = 70;
-pub const PUBKEY_LEN: usize = 33;
 
 /// Creates a tagged hash of a message according to the BIP322 specification.
 pub fn tagged_message_hash(message: &[u8]) -> sha256::Hash {
@@ -46,7 +40,10 @@ pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
         version: Version(0),
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::default(),
+            previous_output: OutPoint {
+                txid: Txid::all_zeros(),
+                vout: 0xFFFFFFFF,
+            },
             script_sig,
             sequence: Sequence::ZERO,
             witness: Witness::new(),
@@ -62,9 +59,9 @@ pub fn to_spend(script_pubkey: &ScriptBuf, message: &str) -> Transaction {
 pub fn to_sign(to_spend: &Transaction) -> Transaction {
     let outpoint = OutPoint {
         txid: to_spend.compute_txid(),
-        vout: 0x00,
+        vout: 0,
     };
-    let script_pub_key = Builder::new().push_opcode(OP_RETURN).into_script();
+    let op_return_script = Builder::new().push_opcode(OP_RETURN).into_script();
 
     Transaction {
         version: Version(0),
@@ -77,7 +74,7 @@ pub fn to_sign(to_spend: &Transaction) -> Transaction {
         }],
         output: vec![TxOut {
             value: Amount::ZERO,
-            script_pubkey: script_pub_key,
+            script_pubkey: op_return_script,
         }],
     }
 }
@@ -88,21 +85,84 @@ pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<
         return Err(Error::InvalidFormat("Empty witness".to_string()));
     }
 
-    if script_pubkey.is_p2wpkh() && witness.len() != 2 {
-        return Err(Error::InvalidFormat(
-            "P2WPKH requires exactly 2 witness elements".to_string(),
-        ));
-    } else if script_pubkey.is_p2wsh() && witness.len() < 2 {
-        return Err(Error::InvalidFormat(
-            "P2WSH requires at least 2 witness elements".to_string(),
-        ));
-    } else if !(script_pubkey.is_p2wpkh() || script_pubkey.is_p2wsh() || script_pubkey.is_p2tr()) {
+    if script_pubkey.is_p2wpkh() {
+        if witness.len() != 2 {
+            return Err(Error::InvalidFormat(
+                "P2WPKH requires exactly 2 witness elements".to_string(),
+            ));
+        }
+    } else if script_pubkey.is_p2wsh() {
+        if witness.len() < 2 {
+            return Err(Error::InvalidFormat(
+                "P2WSH requires at least 2 witness elements".to_string(),
+            ));
+        }
+    } else if script_pubkey.is_p2tr() {
+        // Key-path spend: exactly 1 element (the Schnorr signature, 64 or 65 bytes)
+        // Script-path spends would have more elements but are out of scope for Simple format.
+        if witness.is_empty() {
+            return Err(Error::InvalidFormat(
+                "P2TR requires at least 1 witness element".to_string(),
+            ));
+        }
+    } else {
         return Err(Error::InvalidFormat(
             "Simple format only supports P2WPKH, P2WSH, or P2TR script types".to_string(),
         ));
     }
 
     Ok(())
+}
+
+/// Validates that the "to_sign" transaction correctly spends the "to_spend" transaction
+pub fn validate_to_sign(to_sign: &Transaction, to_spend: &Transaction) -> Result<(), Error> {
+    let to_spend_outpoint = OutPoint {
+        txid: to_spend.compute_txid(),
+        vout: 0,
+    };
+
+    if to_sign.input.is_empty() || to_spend_outpoint != to_sign.input[0].previous_output {
+        return Err(Error::InvalidSignature(
+            "to_sign must spend to_spend output".to_string(),
+        ));
+    }
+
+    // Verify output is OP_RETURN
+    if to_sign.output.is_empty()
+        || to_sign.output[0].script_pubkey != ScriptBuf::from_bytes(vec![OP_RETURN.to_u8()])
+    {
+        return Err(Error::InvalidSignature(
+            "to_sign output must be OP_RETURN".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Extracts compressed public keys from a witness script.
+pub fn extract_pubkeys(witness_script: &ScriptBuf) -> Result<Vec<PublicKey>, Error> {
+    let mut pubkeys = Vec::new();
+
+    for result in witness_script.instructions() {
+        let Ok(Instruction::PushBytes(bytes)) = result else {
+            continue;
+        };
+
+        let data = bytes.as_bytes();
+        if data.len() == 33 && (data[0] == 0x02 || data[0] == 0x03) {
+            if let Ok(key) = PublicKey::from_slice(data) {
+                pubkeys.push(key);
+            }
+        }
+    }
+
+    if pubkeys.is_empty() {
+        return Err(Error::UnsupportedScriptType(
+            "No public keys found in witness script".to_string(),
+        ));
+    }
+
+    Ok(pubkeys)
 }
 
 #[cfg(test)]

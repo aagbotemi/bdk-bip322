@@ -49,6 +49,8 @@ pub enum Error {
     TransactionNotFound(Txid),
     /// UTXO not found in wallet
     UtxoNotFound(OutPoint),
+    /// Script type is not supported
+    UnsupportedScriptType(String),
 }
 
 impl fmt::Display for Error {
@@ -70,6 +72,7 @@ impl fmt::Display for Error {
             Self::ConsensusError(err) => write!(f, "Consensus Error: {}", err),
             Self::TransactionNotFound(err) => write!(f, "Transaction not found: {}", err),
             Self::UtxoNotFound(err) => write!(f, "UTXO not found: {}", err),
+            Self::UnsupportedScriptType(err) => write!(f, "Unsupported script type: {}", err),
         }
     }
 }
@@ -105,4 +108,15 @@ impl From<ConsensusError> for Error {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SignerError(e) => Some(e),
+            Self::IoError(e) => Some(e),
+            Self::ExtractTxError(e) => Some(e.as_ref()),
+            Self::PsbtError(e) => Some(e),
+            Self::ConsensusError(e) => Some(e),
+            _ => None,
+        }
+    }
+}

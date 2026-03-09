@@ -7,7 +7,7 @@ use crate::{
 };
 use alloc::{string::ToString, vec::Vec};
 
-use bdk_wallet::{KeychainKind, SignOptions, Wallet};
+use bdk_wallet::{SignOptions, Wallet};
 use bitcoin::{
     Address, EcdsaSighashType, OutPoint, Psbt, ScriptBuf, Sequence, TapSighashType, Transaction,
     TxIn, TxOut, Witness,
@@ -63,19 +63,17 @@ impl BIP322 for Wallet {
     }
 
     fn verify_message(
-        &mut self,
+        &self,
         proof: &MessageProof,
         message: &str,
         signature_type: SignatureFormat,
         address: &Address,
     ) -> Result<MessageVerificationResult, Error> {
-        let script_pubkey = address.script_pubkey();
-
         match proof {
             MessageProof::Signed(tx) => {
-                verify_signed_proof(self, message, signature_type, address, &script_pubkey, tx)
+                verify_signed_proof(self, message, signature_type, address, tx)
             }
-            MessageProof::Psbt(psbt) => verify_psbt_proof(psbt, script_pubkey),
+            MessageProof::Psbt(psbt) => verify_psbt_proof(psbt, address),
         }
     }
 }
@@ -116,15 +114,19 @@ fn add_proof_of_funds_inputs(
 }
 
 /// Configures PSBT inputs with necessary witness/non-witness UTXO data.
-///
-/// Sets up each PSBT input with the correct sighash type and UTXO information
-/// based on the address type (SegWit vs legacy).
 fn configure_psbt_inputs(
     psbt: &mut Psbt,
     wallet: &Wallet,
     script_pubkey: &ScriptBuf,
     to_spend: &Transaction,
 ) -> Result<(), Error> {
+    let (keychain, derivation_index) =
+        wallet
+            .derivation_of_spk(script_pubkey.clone())
+            .ok_or(Error::InvalidFormat(
+                "Address not found in wallet".to_string(),
+            ))?;
+
     for (i, (psbt_input, tx_input)) in psbt
         .inputs
         .iter_mut()
@@ -144,10 +146,12 @@ fn configure_psbt_inputs(
 
                 if script_pubkey.is_p2wsh() {
                     // Add witness script for P2WSH
-                    let external_desc = wallet.public_descriptor(KeychainKind::External);
+                    let external_desc = wallet.public_descriptor(keychain);
 
-                    if let Ok(derived_desc) = external_desc.at_derivation_index(0) {
-                        let script = derived_desc.script_pubkey();
+                    if let Ok(derived_desc) = external_desc.at_derivation_index(derivation_index) {
+                        let script = derived_desc
+                            .explicit_script()
+                            .map_err(|e| Error::InvalidFormat(e.to_string()))?;
                         psbt_input.witness_script = Some(script);
                     }
                 }
@@ -169,8 +173,8 @@ fn configure_psbt_inputs(
                 psbt_input.witness_utxo = Some(txout.clone());
 
                 if txout.script_pubkey.is_p2wsh() {
-                    let external_desc = wallet.public_descriptor(KeychainKind::External);
-                    if let Ok(derived_desc) = external_desc.at_derivation_index(0) {
+                    let external_desc = wallet.public_descriptor(keychain);
+                    if let Ok(derived_desc) = external_desc.at_derivation_index(derivation_index) {
                         let script = derived_desc
                             .explicit_script()
                             .map_err(|e| Error::InvalidFormat(e.to_string()))?;
