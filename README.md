@@ -48,7 +48,7 @@ use bdk_bip322::{BIP322, SignatureFormat};
 // `wallet` is already created and synced
 let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-let proof = wallet.sign_bip322(
+let proof = wallet.sign_message(
     "Hello Bitcoin",
     SignatureFormat::Simple,
     &address,
@@ -57,7 +57,7 @@ let proof = wallet.sign_bip322(
 ```
 ### Verifying a Signature
 ```rs
-let result = wallet.verify_bip322(
+let result = wallet.verify_message(
     &proof,
     "Hello Bitcoin",
     SignatureFormat::Simple,
