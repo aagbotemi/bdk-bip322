@@ -6,7 +6,7 @@ use bdk_wallet::{
     Wallet,
     keys::ScriptContext,
     miniscript::{
-        Descriptor, Miniscript, Terminal,
+        DefiniteDescriptorKey, Descriptor, Miniscript, Terminal, ToPublicKey as _,
         descriptor::{ShInner, WshInner},
     },
 };
@@ -117,9 +117,15 @@ pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<
                 "P2TR requires at least 1 witness element".to_string(),
             ));
         }
+    } else if script_pubkey.is_p2sh() {
+        if witness.is_empty() {
+            return Err(Error::InvalidFormat(
+                "P2SH-wrapped SegWit requires witness data".to_string(),
+            ));
+        }
     } else {
         return Err(Error::InvalidFormat(
-            "Simple format only supports segwit script types (P2WPKH, P2WSH, P2TR)".to_string(),
+            "Unsupported script type for Simple format".to_string(),
         ));
     }
 
@@ -323,6 +329,66 @@ fn find_timelocks<Ctx: ScriptContext>(
     }
 
     (max_csv, max_cltv)
+}
+
+/// Extracts the redeem script from a P2SH script_sig.
+pub fn extract_redeem_script(script_sig: &ScriptBuf) -> Result<ScriptBuf, Error> {
+    let mut instructions = script_sig.instructions();
+
+    let redeem_script = match instructions.next() {
+        Some(Ok(Instruction::PushBytes(bytes))) => ScriptBuf::from_bytes(bytes.as_bytes().to_vec()),
+        _ => {
+            return Err(Error::InvalidFormat(
+                "P2SH scriptSig must start with a push".to_string(),
+            ));
+        }
+    };
+
+    if instructions.next().is_some() {
+        return Err(Error::InvalidFormat(
+            "P2SH-wrapped SegWit scriptSig must be a single push".to_string(),
+        ));
+    }
+
+    Ok(redeem_script)
+}
+
+/// Configures PSBT input fields for P2SH-wrapped SegWit descriptors.
+pub fn configure_p2sh_input(
+    psbt_input: &mut bitcoin::psbt::Input,
+    derived: &Descriptor<DefiniteDescriptorKey>,
+) -> Result<(), Error> {
+    let Descriptor::Sh(sh) = derived else {
+        return Err(Error::InvalidFormat(
+            "Expected Sh descriptor for P2SH scriptPubKey".to_string(),
+        ));
+    };
+
+    match sh.as_inner() {
+        ShInner::Wpkh(wpkh) => {
+            let pk = wpkh.as_inner().to_public_key();
+            let wpkh_hash = pk
+                .wpubkey_hash()
+                .map_err(|e| Error::InvalidPublicKey(e.to_string()))?;
+            psbt_input.redeem_script = Some(ScriptBuf::new_p2wpkh(&wpkh_hash));
+        }
+        ShInner::Wsh(wsh) => {
+            let witness_script = match wsh.as_inner() {
+                WshInner::Ms(ms) => ms.encode(),
+                WshInner::SortedMulti(sm) => sm.encode(),
+            };
+            let wsh_hash = witness_script.wscript_hash();
+            psbt_input.redeem_script = Some(ScriptBuf::new_p2wsh(&wsh_hash));
+            psbt_input.witness_script = Some(witness_script);
+        }
+        _ => {
+            return Err(Error::UnsupportedScriptType(
+                "Only P2SH-P2WPKH and P2SH-P2WSH are supported".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
