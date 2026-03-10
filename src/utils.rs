@@ -98,8 +98,6 @@ pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<
             ));
         }
     } else if script_pubkey.is_p2tr() {
-        // Key-path spend: exactly 1 element (the Schnorr signature, 64 or 65 bytes)
-        // Script-path spends would have more elements but are out of scope for Simple format.
         if witness.is_empty() {
             return Err(Error::InvalidFormat(
                 "P2TR requires at least 1 witness element".to_string(),

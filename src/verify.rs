@@ -38,7 +38,6 @@ pub fn verify_psbt_proof(
         .skip(1)
         .filter_map(|(i, psbt_input)| {
             let tx_input = &psbt.unsigned_tx.input.get(i)?;
-
             // Get UTXO value from witness_utxo or non_witness_utxo
             psbt_input.witness_utxo.as_ref().or_else(|| {
                 psbt_input
@@ -86,7 +85,6 @@ pub fn verify_signed_proof(
     }
 
     let mut cursor = bitcoin::io::Cursor::new(&signature_bytes);
-
     let secp = Secp256k1::verification_only();
 
     match signature_type {
@@ -104,15 +102,8 @@ pub fn verify_signed_proof(
 
             to_sign.input[0].witness = witness;
 
-            let verification_result = verify_message(
-                wallet,
-                address,
-                &to_sign,
-                to_spend,
-                &script_pubkey,
-                signature_type,
-                &secp,
-            )?;
+            let verification_result =
+                verify_message(wallet, address, &to_sign, to_spend, signature_type, &secp)?;
 
             Ok(MessageVerificationResult {
                 valid: verification_result,
@@ -121,15 +112,8 @@ pub fn verify_signed_proof(
         }
         SignatureFormat::Full => {
             let tx = Transaction::consensus_decode_from_finite_reader(&mut cursor)?;
-            let verification_result = verify_message(
-                wallet,
-                address,
-                &tx,
-                to_spend,
-                &script_pubkey,
-                signature_type,
-                &secp,
-            )?;
+            let verification_result =
+                verify_message(wallet, address, &tx, to_spend, signature_type, &secp)?;
 
             Ok(MessageVerificationResult {
                 valid: verification_result,
@@ -162,15 +146,8 @@ pub fn verify_signed_proof(
                 total_amount += utxo.txout.value;
             }
 
-            let verification_result = verify_message(
-                wallet,
-                address,
-                &tx,
-                to_spend,
-                &script_pubkey,
-                signature_type,
-                &secp,
-            )?;
+            let verification_result =
+                verify_message(wallet, address, &tx, to_spend, signature_type, &secp)?;
 
             Ok(MessageVerificationResult {
                 valid: verification_result,
@@ -190,11 +167,11 @@ fn verify_message(
     address: &Address,
     to_sign: &Transaction,
     to_spend: Transaction,
-    script_pubkey: &ScriptBuf,
     signature_type: SignatureFormat,
     secp: &Secp256k1<VerifyOnly>,
 ) -> Result<bool, Error> {
     validate_to_sign(to_sign, &to_spend)?;
+    let script_pubkey = address.script_pubkey();
 
     let prevout = TxOut {
         value: Amount::from_sat(0),
@@ -226,7 +203,7 @@ fn verify_message(
 
     // For proof-of-funds, verify all additional inputs
     if signature_type == SignatureFormat::FullProofOfFunds {
-        return verify_proof_of_funds(wallet, to_sign, script_pubkey, &to_spend, address, secp);
+        return verify_proof_of_funds(wallet, to_sign, &to_spend, address, secp);
     }
 
     Ok(true)
@@ -236,11 +213,11 @@ fn verify_message(
 fn verify_proof_of_funds(
     wallet: &Wallet,
     to_sign: &Transaction,
-    script_pubkey: &ScriptBuf,
     to_spend: &Transaction,
     address: &Address,
     secp: &Secp256k1<VerifyOnly>,
 ) -> Result<bool, Error> {
+    let script_pubkey = address.script_pubkey();
     if to_sign.input.len() < 2 {
         return Err(Error::InvalidFormat(
             "FullProofOfFunds requires at least 2 inputs".to_string(),
