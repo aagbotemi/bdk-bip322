@@ -4,8 +4,8 @@
 //! legacy, simple, full, and proof-of-funds variants.
 
 use crate::{
-    Error, MessageVerificationResult, SignatureFormat, extract_pubkeys, to_sign, to_spend,
-    validate_to_sign, validate_witness,
+    Error, MessageVerificationResult, SignatureFormat, extract_pubkeys, extract_redeem_script,
+    to_sign, to_spend, validate_to_sign, validate_witness,
 };
 use alloc::{string::ToString, vec::Vec};
 use bdk_wallet::Wallet;
@@ -189,14 +189,15 @@ fn verify_message(
         if wp.version() != WitnessVersion::V0 {
             return Err(Error::UnsupportedSegwitVersion("v0".to_string()));
         }
-        verify_p2wsh(to_sign, &prevout, address, 0, secp)?
+        verify_p2wsh(to_sign, &prevout, &script_pubkey, 0, secp)?
     } else if script_pubkey.is_p2tr() {
         let wp = address.witness_program().ok_or(Error::NotSegwitAddress)?;
         if wp.version() != WitnessVersion::V1 {
             return Err(Error::UnsupportedSegwitVersion("v1".to_string()));
         }
-
         verify_p2tr(to_sign, &prevout, 0, wallet, &to_spend, secp)?
+    } else if script_pubkey.is_p2sh() {
+        verify_p2sh(to_sign, &prevout, &script_pubkey, 0, secp)?
     } else {
         return Ok(false);
     };
@@ -239,7 +240,9 @@ fn verify_proof_of_funds(
         } else if script_pubkey.is_p2tr() {
             verify_p2tr(to_sign, &utxo.txout, i, wallet, to_spend, secp)?
         } else if script_pubkey.is_p2wsh() {
-            verify_p2wsh(to_sign, &utxo.txout, address, i, secp)?
+            verify_p2wsh(to_sign, &utxo.txout, &script_pubkey, i, secp)?
+        } else if script_pubkey.is_p2sh() {
+            verify_p2sh(to_sign, &utxo.txout, &script_pubkey, i, secp)?
         } else {
             return Err(Error::InvalidFormat(
                 "Unsupported script type for proof of funds".to_string(),
@@ -388,11 +391,11 @@ fn verify_p2wpkh(
 fn verify_p2wsh(
     to_sign: &Transaction,
     prevout: &TxOut,
-    address: &Address,
+    script_pubkey: &ScriptBuf,
     input_index: usize,
     secp: &Secp256k1<VerifyOnly>,
 ) -> Result<bool, Error> {
-    let script_pubkey = address.script_pubkey();
+    // let script_pubkey = address.script_pubkey();
     let witness = &to_sign.input[input_index].witness;
 
     if witness.len() < 2 {
@@ -410,7 +413,7 @@ fn verify_p2wsh(
     let script_hash = witness_script.wscript_hash();
     let expected_script_pubkey = ScriptBuf::new_p2wsh(&script_hash);
 
-    if script_pubkey != expected_script_pubkey {
+    if *script_pubkey != expected_script_pubkey {
         return Err(Error::InvalidSignature(
             "Witness script hash doesn't match address".to_string(),
         ));
@@ -572,4 +575,52 @@ fn verify_p2tr(
     let msg = &Message::from_digest_slice(sighash.as_ref()).map_err(|_| Error::InvalidMessage)?;
 
     Ok(secp.verify_schnorr(&signature, msg, &pub_key).is_ok())
+}
+
+/// Verifies P2SH-wrapped SegWit signatures (P2SH-P2WPKH and P2SH-P2WSH).
+///
+/// Extracts the redeem script from the input's script_sig, determines
+/// the inner SegWit type, and delegates to the appropriate verifier.
+fn verify_p2sh(
+    to_sign: &Transaction,
+    prevout: &TxOut,
+    script_pubkey: &ScriptBuf,
+    input_index: usize,
+    secp: &Secp256k1<VerifyOnly>,
+) -> Result<bool, Error> {
+    let input = &to_sign.input[input_index];
+
+    // P2SH-wrapped SegWit: the script_sig contains a single push of the redeem script.
+    // The redeem script IS the inner SegWit scriptPubKey (e.g., OP_0 <20-byte-hash>).
+    let redeem_script = extract_redeem_script(&input.script_sig)?;
+
+    // Verify the redeem script hashes to the P2SH address
+    let script_hash = redeem_script.script_hash();
+    let expected_script_pubkey = ScriptBuf::new_p2sh(&script_hash);
+
+    if *script_pubkey != expected_script_pubkey {
+        return Err(Error::InvalidSignature(
+            "Redeem script hash doesn't match P2SH address".to_string(),
+        ));
+    }
+
+    // Create a synthetic prevout with the inner SegWit scriptPubKey
+    // so the existing verifiers compute the correct sighash.
+    let inner_prevout = TxOut {
+        value: prevout.value,
+        script_pubkey: redeem_script.clone(),
+    };
+
+    if redeem_script.is_p2wpkh() {
+        verify_p2wpkh(to_sign, &inner_prevout, input_index, secp)
+    } else if redeem_script.is_p2wsh() {
+        // For P2SH-P2WSH, we need a synthetic address wrapping the inner P2WSH
+        // so verify_p2wsh can check the witness script hash.
+        // We construct a temporary address from the inner script.
+        verify_p2wsh(to_sign, &inner_prevout, &redeem_script, input_index, secp)
+    } else {
+        Err(Error::UnsupportedScriptType(
+            "Only P2SH-P2WPKH and P2SH-P2WSH are supported.".to_string(),
+        ))
+    }
 }

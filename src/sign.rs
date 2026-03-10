@@ -155,6 +155,25 @@ fn configure_psbt_inputs(
                         psbt_input.witness_script = Some(script);
                     }
                 }
+            } else if script_pubkey.is_p2sh() {
+                // P2SH-wrapped SegWit needs both witness_utxo and redeem_script.
+                psbt_input.witness_utxo = Some(to_spend.output[0].clone());
+
+                // Derive the redeem script from the descriptor
+                let descriptor = wallet.public_descriptor(keychain);
+                if let Ok(derived_desc) = descriptor.at_derivation_index(derivation_index) {
+                    // The redeem script is the inner SegWit script (e.g., OP_0 <20-byte-hash>)
+                    let redeem_script = derived_desc.script_pubkey();
+                    psbt_input.redeem_script = Some(redeem_script);
+
+                    // If the inner script is P2WSH, also attach the witness script
+                    if let Ok(explicit) = derived_desc.explicit_script() {
+                        let inner_spk = derived_desc.script_pubkey();
+                        if inner_spk.is_p2wsh() {
+                            psbt_input.witness_script = Some(explicit);
+                        }
+                    }
+                }
             } else {
                 // Legacy P2PKH requires full transaction
                 psbt_input.non_witness_utxo = Some(to_spend.clone())
@@ -179,6 +198,21 @@ fn configure_psbt_inputs(
                             .explicit_script()
                             .map_err(|e| Error::InvalidFormat(e.to_string()))?;
                         psbt_input.witness_script = Some(script);
+                    }
+                }
+            } else if txout.script_pubkey.is_p2sh() {
+                psbt_input.witness_utxo = Some(txout.clone());
+
+                let descriptor = wallet.public_descriptor(keychain);
+                if let Ok(derived_desc) = descriptor.at_derivation_index(derivation_index) {
+                    let redeem_script = derived_desc.script_pubkey();
+                    psbt_input.redeem_script = Some(redeem_script);
+
+                    if let Ok(explicit) = derived_desc.explicit_script() {
+                        let inner_spk = derived_desc.script_pubkey();
+                        if inner_spk.is_p2wsh() {
+                            psbt_input.witness_script = Some(explicit);
+                        }
                     }
                 }
             } else {
@@ -228,6 +262,13 @@ fn encode_signature(
             Ok(MessageProof::Signed(legacy_signature))
         }
         SignatureFormat::Simple => {
+            if script_pubkey.is_p2sh() {
+                return Err(Error::InvalidFormat(
+                    "Simple format is not supported for P2SH addresses. Use Full format."
+                        .to_string(),
+                ));
+            }
+
             let witness = psbt.inputs[0]
                 .final_script_witness
                 .as_ref()
@@ -518,5 +559,36 @@ mod tests {
         assert!(verify.valid);
         assert_eq!(verify.proven_amount.unwrap(), Amount::from_sat(50000));
         assert_ne!(verify.proven_amount.unwrap(), Amount::from_sat(0))
+    }
+
+    #[test]
+    fn test_full_format_p2sh_p2wpkh() {
+        const EXTERNAL_DESC: &str = "sh(wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/49'/1'/0'/0/*))";
+        const INTERNAL_DESC: &str = "sh(wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/49'/1'/0'/1/*))";
+
+        let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        // P2SH-wrapped SegWit must use Full format, not Simple
+        let sign = wallet
+            .sign_message("HELLO WORLD", SignatureFormat::Full, &address, None)
+            .unwrap();
+
+        let verify = wallet
+            .verify_message(&sign, "HELLO WORLD", SignatureFormat::Full, &address)
+            .unwrap();
+
+        assert!(verify.valid);
+    }
+
+    #[test]
+    fn test_simple_format_rejected_for_p2sh() {
+        let (mut wallet, _) = get_funded_wallet_single(
+            "sh(wsh(pk(cVpPVruEDdmutPzisEsYvtST1usBR3ntr8pXSyt6D2YYqXRyPcFW)))",
+        );
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        let result = wallet.sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None);
+        assert!(result.is_err());
     }
 }

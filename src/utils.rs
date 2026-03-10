@@ -103,9 +103,15 @@ pub fn validate_witness(witness: &Witness, script_pubkey: &ScriptBuf) -> Result<
                 "P2TR requires at least 1 witness element".to_string(),
             ));
         }
+    } else if script_pubkey.is_p2sh() {
+        if witness.is_empty() {
+            return Err(Error::InvalidFormat(
+                "P2SH-wrapped SegWit requires a non-empty witness".to_string(),
+            ));
+        }
     } else {
         return Err(Error::InvalidFormat(
-            "Simple format only supports P2WPKH, P2WSH, or P2TR script types".to_string(),
+            "Simple format only supports P2WPKH, P2WSH, P2SH, or P2TR script types".to_string(),
         ));
     }
 
@@ -161,6 +167,28 @@ pub fn extract_pubkeys(witness_script: &ScriptBuf) -> Result<Vec<PublicKey>, Err
     }
 
     Ok(pubkeys)
+}
+
+/// Extracts the redeem script from a P2SH script_sig.
+///
+/// In a P2SH-wrapped SegWit input, the script_sig is a single push
+/// of the serialized redeem script (the inner SegWit scriptPubKey).
+pub fn extract_redeem_script(script_sig: &ScriptBuf) -> Result<ScriptBuf, Error> {
+    // P2SH-wrapped SegWit script_sig is a single push of the redeem script
+    let mut last_push = None;
+
+    for result in script_sig.instructions() {
+        match result {
+            Ok(Instruction::PushBytes(bytes)) => {
+                last_push = Some(ScriptBuf::from_bytes(bytes.as_bytes().to_vec()));
+            }
+            _ => {}
+        }
+    }
+
+    last_push.ok_or(Error::InvalidFormat(
+        "No redeem script found in script_sig".to_string(),
+    ))
 }
 
 #[cfg(test)]
