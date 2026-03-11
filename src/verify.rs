@@ -28,8 +28,27 @@ use bitcoin::{
 /// **Note**: This validates structure and amounts only, not cryptographic signatures.
 pub fn verify_psbt_proof(
     psbt: &Psbt,
+    message: &str,
     address: &Address,
 ) -> Result<MessageVerificationResult, Error> {
+    let script_pubkey = address.script_pubkey();
+
+    // Verify the PSBT was constructed for this message
+    let expected_to_spend = to_spend(&script_pubkey, message);
+    let expected_outpoint = OutPoint {
+        txid: expected_to_spend.compute_txid(),
+        vout: 0,
+    };
+
+    if psbt.unsigned_tx.input.is_empty()
+        || psbt.unsigned_tx.input[0].previous_output != expected_outpoint
+    {
+        return Ok(MessageVerificationResult {
+            valid: false,
+            proven_amount: None,
+        });
+    }
+
     // Calculate total amount from inputs matching the address (skip input 0 which is the virtual to_spend)
     let total_amount: Amount = psbt
         .inputs
@@ -46,7 +65,7 @@ pub fn verify_psbt_proof(
                     .and_then(|tx| tx.output.get(tx_input.previous_output.vout as usize))
             })
         })
-        .filter(|utxo| utxo.script_pubkey == address.script_pubkey())
+        .filter(|utxo| utxo.script_pubkey == script_pubkey)
         .map(|utxo| utxo.value)
         .sum();
 
@@ -178,7 +197,7 @@ fn verify_message(
         script_pubkey: to_spend.output[0].clone().script_pubkey,
     };
 
-    if script_pubkey.is_p2wpkh() {
+    let valid = if script_pubkey.is_p2wpkh() {
         let wp = address.witness_program().ok_or(Error::NotSegwitAddress)?;
         if wp.version() != WitnessVersion::V0 {
             return Err(Error::UnsupportedSegwitVersion("v0".to_string()));
@@ -195,11 +214,14 @@ fn verify_message(
         if wp.version() != WitnessVersion::V1 {
             return Err(Error::UnsupportedSegwitVersion("v1".to_string()));
         }
-
         verify_p2tr(to_sign, &prevout, 0, wallet, &to_spend, secp)?
     } else {
         return Ok(false);
     };
+
+    if !valid {
+        return Ok(false);
+    }
 
     // For proof-of-funds, verify all additional inputs
     if signature_type == SignatureFormat::FullProofOfFunds {
@@ -235,11 +257,17 @@ fn verify_proof_of_funds(
         }
 
         if script_pubkey.is_p2wpkh() {
-            verify_p2wpkh(to_sign, &utxo.txout, i, secp)?
+            if !verify_p2wpkh(to_sign, &utxo.txout, i, secp)? {
+                return Ok(false);
+            }
         } else if script_pubkey.is_p2tr() {
-            verify_p2tr(to_sign, &utxo.txout, i, wallet, to_spend, secp)?
+            if !verify_p2tr(to_sign, &utxo.txout, i, wallet, to_spend, secp)? {
+                return Ok(false);
+            }
         } else if script_pubkey.is_p2wsh() {
-            verify_p2wsh(to_sign, &utxo.txout, address, i, secp)?
+            if !verify_p2wsh(to_sign, &utxo.txout, address, i, secp)? {
+                return Ok(false);
+            }
         } else {
             return Err(Error::InvalidFormat(
                 "Unsupported script type for proof of funds".to_string(),

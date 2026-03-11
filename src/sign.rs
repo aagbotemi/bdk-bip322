@@ -73,7 +73,7 @@ impl BIP322 for Wallet {
             MessageProof::Signed(tx) => {
                 verify_signed_proof(self, message, signature_type, address, tx)
             }
-            MessageProof::Psbt(psbt) => verify_psbt_proof(psbt, address),
+            MessageProof::Psbt(psbt) => verify_psbt_proof(psbt, message, address),
         }
     }
 }
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_format_p2pwkh() {
+    fn test_full_format_p2wpkh() {
         const EXTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/0/*)";
         const INTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/1/*)";
 
@@ -404,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_with_proof_of_funds_format_p2pwkh() {
+    fn test_full_with_proof_of_funds_format_p2wpkh() {
         const EXTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/0/*)";
         const INTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/1/*)";
 
