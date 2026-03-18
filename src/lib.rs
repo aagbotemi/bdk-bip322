@@ -2,7 +2,7 @@
 //!
 //! This crate provides:
 //! - Construction of virtual `to_spend` and `to_sign` transactions
-//! - Signing and verification for Legacy, Simple, and Full BIP‑322 formats
+//! - Signing and verification for Simple, Full, and Full Proof-of-Funds BIP‑322 formats
 //! - Optional “proof of funds” support via additional UTXO inputs
 #![no_std]
 
@@ -41,11 +41,11 @@ use bitcoin::{
 pub enum SignatureFormat {
     /// Legacy Bitcoin Core message signing format (P2PKH only).
     Legacy,
-    /// A simplified version of the BIP322 format that includes only essential data.
+    /// A simplified version of the BIP322 format that includes only the witness stack.
     Simple,
     /// Full BIP322 format with complete transaction data.
     Full,
-    /// The Full BIP322 format with Proof-of-funds(utxo) capabiility.
+    /// The Full BIP322 format with Proof-of-funds capabiility.
     FullProofOfFunds,
 }
 
@@ -76,7 +76,6 @@ pub enum SignatureFormat {
 /// let result = wallet.verify_message(
 ///     &proof,
 ///     "Hello Bitcoin",
-///     SignatureFormat::Simple,
 ///     &address,
 /// )?;
 ///
@@ -121,7 +120,6 @@ pub trait BIP322 {
         &self,
         proof: &MessageProof,
         message: &str,
-        signature_type: SignatureFormat,
         address: &Address,
     ) -> Result<MessageVerificationResult, Error>;
 }

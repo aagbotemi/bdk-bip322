@@ -4,20 +4,25 @@
 //! legacy, simple, full, and proof-of-funds variants.
 
 use crate::{
-    Error, MessageVerificationResult, SignatureFormat, extract_pubkeys, to_sign, to_spend,
-    validate_to_sign, validate_witness,
+    Error, MessageVerificationResult, SignatureFormat, detect_signature_format, extract_pubkeys,
+    to_sign, to_spend, validate_to_sign, validate_witness,
 };
 use alloc::{string::ToString, vec::Vec};
 use bdk_wallet::Wallet;
 use bitcoin::{
-    Address, Amount, EcdsaSighashType, OutPoint, Psbt, PubkeyHash, PublicKey, ScriptBuf,
+    Address, Amount, EcdsaSighashType, OutPoint, Psbt, PubkeyHash, PublicKey, ScriptBuf, Sequence,
     TapSighashType, Transaction, TxOut, Witness, WitnessVersion, XOnlyPublicKey,
+    absolute::LockTime,
     base64::{Engine, engine::general_purpose},
     consensus::Decodable,
     hashes::Hash,
+    hashes::{HashEngine, sha256d},
     key::Secp256k1,
+    script::Instruction,
+    secp256k1::ecdsa::{RecoverableSignature, RecoveryId},
     secp256k1::{Message, VerifyOnly, ecdsa::Signature, schnorr},
     sighash::{self, SighashCache},
+    transaction::Version,
 };
 
 /// Verifies a PSBT (unsigned/partially-signed) proof for proof-of-funds.
@@ -86,29 +91,30 @@ pub fn verify_psbt_proof(
 pub fn verify_signed_proof(
     wallet: &Wallet,
     message: &str,
-    signature_type: SignatureFormat,
     address: &Address,
-    tx: &str,
+    signature_base64: &str,
 ) -> Result<MessageVerificationResult, Error> {
     let script_pubkey = address.script_pubkey();
     let to_spend = to_spend(&script_pubkey, message);
-    let mut to_sign = to_sign(&to_spend);
+    let mut to_sign = to_sign(&to_spend, Version(0), LockTime::ZERO, Sequence::ZERO);
 
     // Decode the base64 signature
     let signature_bytes = general_purpose::STANDARD
-        .decode(tx)
+        .decode(signature_base64)
         .map_err(|_| Error::InvalidFormat("Invalid base64 encoding".to_string()))?;
 
     if signature_bytes.is_empty() {
         return Err(Error::InvalidFormat("Empty scriptSig".to_string()));
     }
 
-    let mut cursor = bitcoin::io::Cursor::new(&signature_bytes);
+    let mut cursor = bitcoin::io::Cursor::new(signature_bytes.clone());
     let secp = Secp256k1::verification_only();
+
+    let signature_type = detect_signature_format(&signature_bytes)?;
 
     match signature_type {
         SignatureFormat::Legacy => {
-            let verification_result = verify_legacy(&signature_bytes, message, address, &secp)?;
+            let verification_result = verify_legacy(signature_base64, message, address, &secp)?;
 
             Ok(MessageVerificationResult {
                 valid: verification_result,
@@ -131,6 +137,9 @@ pub fn verify_signed_proof(
         }
         SignatureFormat::Full => {
             let tx = Transaction::consensus_decode_from_finite_reader(&mut cursor)?;
+
+            validate_to_sign(&tx, &to_spend)?;
+
             let verification_result =
                 verify_message(wallet, address, &tx, to_spend, signature_type, &secp)?;
 
@@ -147,6 +156,7 @@ pub fn verify_signed_proof(
                     "FullProofOfFunds requires at least 2 inputs".to_string(),
                 ));
             }
+            validate_to_sign(&tx, &to_spend)?;
 
             let mut total_amount = Amount::ZERO;
 
@@ -197,7 +207,9 @@ fn verify_message(
         script_pubkey: to_spend.output[0].clone().script_pubkey,
     };
 
-    let valid = if script_pubkey.is_p2wpkh() {
+    let valid = if script_pubkey.is_p2pkh() {
+        verify_p2pkh(to_sign, &script_pubkey, 0, secp)?
+    } else if script_pubkey.is_p2wpkh() {
         let wp = address.witness_program().ok_or(Error::NotSegwitAddress)?;
         if wp.version() != WitnessVersion::V0 {
             return Err(Error::UnsupportedSegwitVersion("v0".to_string()));
@@ -256,7 +268,11 @@ fn verify_proof_of_funds(
             return Ok(false);
         }
 
-        if script_pubkey.is_p2wpkh() {
+        if script_pubkey.is_p2pkh() {
+            if !verify_p2pkh(to_sign, &script_pubkey, i, secp)? {
+                return Ok(false);
+            }
+        } else if script_pubkey.is_p2wpkh() {
             if !verify_p2wpkh(to_sign, &utxo.txout, i, secp)? {
                 return Ok(false);
             }
@@ -280,72 +296,152 @@ fn verify_proof_of_funds(
 
 /// Verifies Legacy format Bitcoin Core message signature.
 fn verify_legacy(
-    signature_bytes: &[u8],
+    signature_base64: &str,
     message: &str,
     address: &Address,
     secp: &Secp256k1<VerifyOnly>,
 ) -> Result<bool, Error> {
-    // Parse scriptSig: [sig_len][sig_data][sighash][pubkey_len][pubkey_data]
-    let signature_push_len = signature_bytes[0] as usize;
-    if signature_push_len == 0 || signature_bytes.len() < 1 + signature_push_len {
-        return Err(Error::InvalidFormat(
-            "scriptSig too short for declared signature length".to_string(),
-        ));
+    let signature_bytes = general_purpose::STANDARD
+        .decode(signature_base64)
+        .map_err(|_| Error::InvalidFormat("Invalid base64 encoding".to_string()))?;
+
+    if signature_bytes.len() != 65 {
+        return Err(Error::InvalidFormat(alloc::format!(
+            "Legacy signature must be 65 bytes, got {}",
+            signature_bytes.len()
+        )));
     }
 
-    let sig_with_sighash = &signature_bytes[1..1 + signature_push_len];
-    let sig_der = &sig_with_sighash[..signature_push_len - 1];
-    let sighash_byte = sig_with_sighash[signature_push_len - 1];
+    // Parse recovery flag
+    let recovery_flag = signature_bytes[0];
+    let (recovery_id, compressed) = if (27..=30).contains(&recovery_flag) {
+        (recovery_flag - 27, false)
+    } else if (31..=34).contains(&recovery_flag) {
+        (recovery_flag - 31, true)
+    } else {
+        return Err(Error::InvalidFormat(alloc::format!(
+            "Invalid recovery flag: {}",
+            recovery_flag
+        )));
+    };
 
-    // Validate pubkey length marker
-    let pubkey_offset = 1 + signature_push_len;
-    if signature_bytes.len() < pubkey_offset + 1 {
-        return Err(Error::InvalidFormat(
-            "scriptSig too short for pubkey length byte".to_string(),
-        ));
+    // Compute Bitcoin Core message hash
+    let msg_hash = {
+        let mut engine = sha256d::Hash::engine();
+        engine.input(b"\x18Bitcoin Signed Message:\n");
+        let msg_bytes = message.as_bytes();
+        // Encode message length as Bitcoin varint
+        let mut len_buf = Vec::new();
+        bitcoin::consensus::encode::Encodable::consensus_encode(
+            &bitcoin::VarInt(msg_bytes.len() as u64),
+            &mut len_buf,
+        )
+        .map_err(Error::IoError)?;
+        engine.input(&len_buf);
+        engine.input(msg_bytes);
+        sha256d::Hash::from_engine(engine)
+    };
+
+    let msg = Message::from_digest_slice(msg_hash.as_ref()).map_err(|_| Error::InvalidMessage)?;
+
+    // Build recoverable signature
+    let rec_id = RecoveryId::from_i32(recovery_id as i32)
+        .map_err(|e| Error::InvalidSignature(e.to_string()))?;
+    let recoverable_sig = RecoverableSignature::from_compact(&signature_bytes[1..65], rec_id)
+        .map_err(|e| Error::InvalidSignature(e.to_string()))?;
+
+    // Recover the public key
+    let recovered_pubkey = secp
+        .recover_ecdsa(&msg, &recoverable_sig)
+        .map_err(|e| Error::InvalidSignature(e.to_string()))?;
+
+    // Serialize in the correct format (compressed or uncompressed)
+    let pubkey_bytes = if compressed {
+        recovered_pubkey.serialize().to_vec()
+    } else {
+        recovered_pubkey.serialize_uncompressed().to_vec()
+    };
+
+    // Derive P2PKH script from recovered key and compare with address
+    let pubkey_hash = PubkeyHash::hash(&pubkey_bytes);
+    let expected_script = ScriptBuf::new_p2pkh(&pubkey_hash);
+
+    Ok(expected_script == address.script_pubkey())
+}
+
+/// Verifies P2PKH format
+fn verify_p2pkh(
+    to_sign: &Transaction,
+    script_pubkey: &ScriptBuf,
+    input_index: usize,
+    secp: &Secp256k1<VerifyOnly>,
+) -> Result<bool, Error> {
+    let script_sig = &to_sign.input[input_index].script_sig;
+
+    if script_sig.is_empty() {
+        return Ok(false);
     }
-    let pubkey_len = signature_bytes[pubkey_offset] as usize;
 
-    let expected_total = pubkey_offset + 1 + pubkey_len;
-    if signature_bytes.len() != expected_total {
-        return Err(Error::InvalidFormat(
-            "scriptSig has unexpected trailing data".to_string(),
-        ));
+    let mut instructions = script_sig.instructions();
+
+    // DER signature + sighash byte
+    let sig_with_sighash = match instructions.next() {
+        Some(Ok(Instruction::PushBytes(bytes))) => bytes.as_bytes(),
+        _ => {
+            return Err(Error::InvalidFormat(
+                "Expected signature push in scriptSig".to_string(),
+            ));
+        }
+    };
+
+    if sig_with_sighash.is_empty() {
+        return Ok(false);
     }
-    let pubkey_bytes = &signature_bytes[pubkey_offset + 1..expected_total];
 
-    // Validate sighash type
+    let sighash_byte = sig_with_sighash[sig_with_sighash.len() - 1];
+    let sig_der = &sig_with_sighash[..sig_with_sighash.len() - 1];
+
     let sighash_type = EcdsaSighashType::from_consensus(sighash_byte as u32);
     if sighash_type != EcdsaSighashType::All {
         return Err(Error::InvalidSighashType);
     }
 
-    // Parse public key and derive script_pubkey
+    // compressed public key
+    let pubkey_bytes = match instructions.next() {
+        Some(Ok(Instruction::PushBytes(bytes))) => bytes.as_bytes(),
+        _ => {
+            return Err(Error::InvalidFormat(
+                "Expected pubkey push in scriptSig".to_string(),
+            ));
+        }
+    };
+
+    if instructions.next().is_some() {
+        return Err(Error::InvalidFormat(
+            "Unexpected extra data in scriptSig".to_string(),
+        ));
+    }
+
     let pub_key =
         PublicKey::from_slice(pubkey_bytes).map_err(|e| Error::InvalidPublicKey(e.to_string()))?;
 
     let pubkey_hash = PubkeyHash::hash(pubkey_bytes);
-    let script_pubkey = ScriptBuf::new_p2pkh(&pubkey_hash);
+    let expected_script_pubkey = ScriptBuf::new_p2pkh(&pubkey_hash);
 
-    if script_pubkey != address.script_pubkey() {
+    if expected_script_pubkey != *script_pubkey {
         return Err(Error::InvalidFormat(
             "Address doesn't match public key in signature".to_string(),
         ));
     }
 
-    // Create the to_spend transaction
-    let to_spend = to_spend(&script_pubkey, message);
-    let to_sign = to_sign(&to_spend);
-
-    // Calculate the legacy sighash that was signed
-    let sighash_cache = SighashCache::new(&to_sign);
+    // Compute the legacy sighash
+    let sighash_cache = SighashCache::new(to_sign);
     let sighash = sighash_cache
-        .legacy_signature_hash(0, &script_pubkey, sighash_type.to_u32())
+        .legacy_signature_hash(0, script_pubkey, sighash_type.to_u32())
         .map_err(|_| Error::SighashError)?;
 
     let msg = Message::from_digest_slice(sighash.as_ref()).map_err(|_| Error::InvalidMessage)?;
 
-    // Parse and verify signature
     let signature =
         Signature::from_der(sig_der).map_err(|e| Error::InvalidSignature(e.to_string()))?;
 
@@ -566,7 +662,7 @@ fn verify_p2tr(
         }
     };
 
-    if sighash_type != TapSighashType::All && sighash_type != TapSighashType::Default {
+    if !matches!(sighash_type, TapSighashType::Default | TapSighashType::All) {
         return Err(Error::InvalidSighashType);
     }
 

@@ -2,21 +2,21 @@
 //! according to the BIP-322 standard.
 
 use crate::{
-    MessageProof, MessageVerificationResult, SignatureFormat, validate_witness, verify_psbt_proof,
-    verify_signed_proof,
+    BIP322, Error, MessageProof, MessageVerificationResult, SignatureFormat, derive_tx_params,
+    to_sign, to_spend, validate_witness, verify_psbt_proof, verify_signed_proof,
 };
 use alloc::{string::ToString, vec::Vec};
 
 use bdk_wallet::{SignOptions, Wallet};
 use bitcoin::{
     Address, EcdsaSighashType, OutPoint, Psbt, ScriptBuf, Sequence, TapSighashType, Transaction,
-    TxIn, TxOut, Witness,
+    TxIn, Witness,
+    absolute::LockTime,
     base64::{Engine, engine::general_purpose},
     consensus::Encodable,
     psbt::PsbtSighashType,
+    transaction::Version,
 };
-
-use crate::{BIP322, Error, to_sign, to_spend};
 
 impl BIP322 for Wallet {
     fn sign_message(
@@ -26,18 +26,31 @@ impl BIP322 for Wallet {
         address: &Address,
         utxos: Option<Vec<OutPoint>>,
     ) -> Result<MessageProof, Error> {
-        let script_pubkey = address.script_pubkey();
+        if signature_type == SignatureFormat::Legacy {
+            return Err(Error::InvalidFormat(
+                "Legacy format is verify-only. Use Simple or Full for P2PKH addresses".to_string(),
+            ));
+        }
 
-        // Create the virtual to_spend and to_sign transactions
+        let script_pubkey = address.script_pubkey();
         let to_spend = to_spend(&script_pubkey, message);
-        let mut to_sign = to_sign(&to_spend);
+
+        let (version, lock_time, sequence) = match signature_type {
+            SignatureFormat::Simple => (Version(0), LockTime::ZERO, Sequence::ZERO),
+            SignatureFormat::Full | SignatureFormat::FullProofOfFunds => {
+                derive_tx_params(self, &script_pubkey)
+            }
+            SignatureFormat::Legacy => unreachable!(),
+        };
+
+        let mut to_sign = to_sign(&to_spend, version, lock_time, sequence);
 
         // Handle proof-of-funds by adding additional inputs
         if signature_type == SignatureFormat::FullProofOfFunds {
             let specific_utxos = utxos.ok_or(Error::InvalidFormat(
                 "UTXOs must be provided for FullProofOfFunds format".to_string(),
             ))?;
-            add_proof_of_funds_inputs(&mut to_sign, self, &script_pubkey, specific_utxos)?;
+            add_proof_of_funds_inputs(&mut to_sign, self, &specific_utxos)?;
         } else if utxos.is_some() {
             return Err(Error::InvalidFormat(
                 "UTXOs parameter only supported for FullProofOfFunds format".to_string(),
@@ -53,7 +66,7 @@ impl BIP322 for Wallet {
             ..Default::default()
         };
 
-        let finalized = self.sign(&mut psbt, sign_options)?;
+        let finalized = self.sign(&mut psbt, sign_options.clone())?;
 
         if finalized {
             encode_signature(&psbt, signature_type, &script_pubkey)
@@ -66,14 +79,30 @@ impl BIP322 for Wallet {
         &self,
         proof: &MessageProof,
         message: &str,
-        signature_type: SignatureFormat,
         address: &Address,
     ) -> Result<MessageVerificationResult, Error> {
         match proof {
-            MessageProof::Signed(tx) => {
-                verify_signed_proof(self, message, signature_type, address, tx)
+            MessageProof::Signed(signature_base64) => {
+                verify_signed_proof(self, message, address, signature_base64)
             }
-            MessageProof::Psbt(psbt) => verify_psbt_proof(psbt, message, address),
+            MessageProof::Psbt(psbt) => {
+                // If every input is finalized, extract and do full cryptographic verification
+                let is_finalized = psbt.inputs.iter().all(|input| {
+                    input.final_script_witness.is_some() || input.final_script_sig.is_some()
+                });
+
+                if is_finalized {
+                    let tx = psbt.clone().extract_tx()?;
+                    let mut buf = Vec::new();
+                    tx.consensus_encode(&mut buf)?;
+                    let signature_base64 = general_purpose::STANDARD.encode(&buf);
+                    verify_signed_proof(self, message, address, &signature_base64)
+                } else {
+                    // Unfinalized PSBT: structural validation + amount check only.
+                    // Cryptographic signatures are NOT verified in this path.
+                    verify_psbt_proof(psbt, message, address)
+                }
+            }
         }
     }
 }
@@ -85,25 +114,29 @@ impl BIP322 for Wallet {
 fn add_proof_of_funds_inputs(
     to_sign: &mut Transaction,
     wallet: &Wallet,
-    script_pubkey: &ScriptBuf,
-    utxos: Vec<OutPoint>,
+    utxos: &[OutPoint],
 ) -> Result<(), Error> {
-    let address_utxos: Vec<(OutPoint, TxOut)> = wallet
-        .list_unspent()
-        .filter(|utxo| utxos.contains(&utxo.outpoint) && utxo.txout.script_pubkey == *script_pubkey)
-        .map(|utxo| (utxo.outpoint, utxo.txout))
-        .collect();
-
-    if address_utxos.is_empty() {
+    if utxos.is_empty() {
         return Err(Error::InvalidFormat(
             "No UTXOs available for proof-of-funds".to_string(),
         ));
     }
 
     // Add each UTXO as an input
-    for (outpoint, _) in &address_utxos {
+    for &outpoint in utxos {
+        let _utxo = wallet
+            .get_utxo(outpoint)
+            .ok_or(Error::UtxoNotFound(outpoint))?;
+
+        if to_sign.input.iter().any(|i| i.previous_output == outpoint) {
+            return Err(Error::InvalidFormat(format!(
+                "Duplicate proof-of-funds input: {}",
+                outpoint
+            )));
+        }
+
         to_sign.input.push(TxIn {
-            previous_output: *outpoint,
+            previous_output: outpoint,
             script_sig: ScriptBuf::new(),
             sequence: Sequence::ZERO,
             witness: Witness::new(),
@@ -114,80 +147,77 @@ fn add_proof_of_funds_inputs(
 }
 
 /// Configures PSBT inputs with necessary witness/non-witness UTXO data.
+///
+/// Resolves each input's script type and derivation independently, supporting
+/// mixed script types across proof-of-funds inputs.
 fn configure_psbt_inputs(
     psbt: &mut Psbt,
     wallet: &Wallet,
     script_pubkey: &ScriptBuf,
     to_spend: &Transaction,
 ) -> Result<(), Error> {
-    let (keychain, derivation_index) =
-        wallet
-            .derivation_of_spk(script_pubkey.clone())
-            .ok_or(Error::InvalidFormat(
-                "Address not found in wallet".to_string(),
-            ))?;
-
     for (i, (psbt_input, tx_input)) in psbt
         .inputs
         .iter_mut()
         .zip(psbt.unsigned_tx.input.iter())
         .enumerate()
     {
-        // Set appropriate sighash type
-        psbt_input.sighash_type = if script_pubkey.is_p2tr() {
+        // Resolve the prevout and derivation for this specific input
+        let (txout, input_spk, keychain, derivation_index) = if i == 0 {
+            let (kc, idx) =
+                wallet
+                    .derivation_of_spk(script_pubkey.clone())
+                    .ok_or(Error::InvalidFormat(
+                        "Address not found in wallet".to_string(),
+                    ))?;
+            (to_spend.output[0].clone(), script_pubkey.clone(), kc, idx)
+        } else {
+            let utxo = wallet
+                .get_utxo(tx_input.previous_output)
+                .ok_or(Error::UtxoNotFound(tx_input.previous_output))?;
+            let spk = utxo.txout.script_pubkey.clone();
+            let (kc, idx) = wallet
+                .derivation_of_spk(spk.clone())
+                .ok_or(Error::InvalidFormat(
+                    "Proof-of-funds UTXO not owned by wallet".to_string(),
+                ))?;
+            (utxo.txout, spk, kc, idx)
+        };
+
+        psbt_input.sighash_type = if input_spk.is_p2tr() {
             Some(PsbtSighashType::from(TapSighashType::All))
         } else {
             Some(PsbtSighashType::from(EcdsaSighashType::All))
         };
 
-        if i == 0 {
-            if script_pubkey.is_p2tr() || script_pubkey.is_p2wpkh() || script_pubkey.is_p2wsh() {
-                psbt_input.witness_utxo = Some(to_spend.output[0].clone());
+        if input_spk.is_p2tr() || input_spk.is_p2wpkh() || input_spk.is_p2wsh() {
+            psbt_input.witness_utxo = Some(txout);
 
-                if script_pubkey.is_p2wsh() {
-                    // Add witness script for P2WSH
-                    let external_desc = wallet.public_descriptor(keychain);
-
-                    if let Ok(derived_desc) = external_desc.at_derivation_index(derivation_index) {
-                        let script = derived_desc
-                            .explicit_script()
-                            .map_err(|e| Error::InvalidFormat(e.to_string()))?;
-                        psbt_input.witness_script = Some(script);
-                    }
-                }
-            } else {
-                // Legacy P2PKH requires full transaction
-                psbt_input.non_witness_utxo = Some(to_spend.clone())
+            if input_spk.is_p2wsh() {
+                let desc = wallet.public_descriptor(keychain);
+                let derived = desc
+                    .at_derivation_index(derivation_index)
+                    .map_err(|e| Error::InvalidFormat(e.to_string()))?;
+                let script = derived
+                    .explicit_script()
+                    .map_err(|e| Error::InvalidFormat(e.to_string()))?;
+                psbt_input.witness_script = Some(script);
             }
-        } else {
-            let utxo = wallet
-                .get_utxo(tx_input.previous_output)
-                .ok_or(Error::UtxoNotFound(tx_input.previous_output))?;
-
-            let txout = utxo.txout;
-
-            if txout.script_pubkey.is_p2tr()
-                || txout.script_pubkey.is_p2wpkh()
-                || txout.script_pubkey.is_p2wsh()
-            {
-                psbt_input.witness_utxo = Some(txout.clone());
-
-                if txout.script_pubkey.is_p2wsh() {
-                    let external_desc = wallet.public_descriptor(keychain);
-                    if let Ok(derived_desc) = external_desc.at_derivation_index(derivation_index) {
-                        let script = derived_desc
-                            .explicit_script()
-                            .map_err(|e| Error::InvalidFormat(e.to_string()))?;
-                        psbt_input.witness_script = Some(script);
-                    }
-                }
+        } else if input_spk.is_p2pkh() {
+            // P2PKH requires full transaction as non-witness UTXO
+            if i == 0 {
+                psbt_input.non_witness_utxo = Some(to_spend.clone());
             } else {
-                // Legacy input requires full transaction
                 let tx = wallet
                     .get_tx(tx_input.previous_output.txid)
                     .ok_or(Error::TransactionNotFound(tx_input.previous_output.txid))?;
                 psbt_input.non_witness_utxo = Some(tx.tx_node.tx.as_ref().clone());
             }
+        } else {
+            return Err(Error::UnsupportedScriptType(alloc::format!(
+                "Unsupported script type for input {}",
+                i
+            )));
         }
     }
 
@@ -205,28 +235,20 @@ fn encode_signature(
 ) -> Result<MessageProof, Error> {
     let mut buffer = Vec::new();
 
-    match signature_type {
-        SignatureFormat::Legacy => {
-            if !script_pubkey.is_p2pkh() {
-                return Err(Error::InvalidFormat(
-                    "Legacy format only supported for P2PKH addresses".to_string(),
-                ));
-            }
-            let script_sig =
-                psbt.inputs[0]
-                    .final_script_sig
-                    .as_ref()
-                    .ok_or(Error::InvalidFormat(
-                        "No final script_sig found".to_string(),
-                    ))?;
+    let signature_format = if signature_type == SignatureFormat::Simple
+        && !script_pubkey.is_p2wpkh()
+        && !script_pubkey.is_p2wsh()
+        && !script_pubkey.is_p2tr()
+    {
+        SignatureFormat::Full
+    } else {
+        signature_type
+    };
 
-            if script_sig.is_empty() {
-                return Err(Error::InvalidFormat("Empty script_sig".to_string()));
-            }
-
-            let legacy_signature = general_purpose::STANDARD.encode(script_sig.as_bytes());
-            Ok(MessageProof::Signed(legacy_signature))
-        }
+    match signature_format {
+        SignatureFormat::Legacy => Err(Error::InvalidFormat(
+            "Legacy format is verify-only. Use Simple or Full for P2PKH addresses".to_string(),
+        )),
         SignatureFormat::Simple => {
             let witness = psbt.inputs[0]
                 .final_script_witness
@@ -259,21 +281,33 @@ mod tests {
     use bitcoin::Amount;
 
     #[test]
-    fn test_legacy_format() {
+    fn test_legacy_signing_rejected() {
         const EXTERNAL_DESC: &str = "pkh(tprv8ZgxMBicQKsPfGXKjYNsw4gayjfBsq6FHxvNZ8LSBdz4DSTeBPd7cjvVQXTdMH9NJBVwNrNKLDr58dcrf4YmWLYBs4KogJhSgUELXuo1JwH/44'/1'/0'/0/*)";
         const INTERNAL_DESC: &str = "pkh(tprv8ZgxMBicQKsPfGXKjYNsw4gayjfBsq6FHxvNZ8LSBdz4DSTeBPd7cjvVQXTdMH9NJBVwNrNKLDr58dcrf4YmWLYBs4KogJhSgUELXuo1JwH/44'/1'/0'/1/*)";
 
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Legacy;
+        let result = wallet.sign_message("HELLO WORLD", SignatureFormat::Legacy, &address, None);
 
+        assert!(result.is_err())
+    }
+
+    #[test]
+    fn test_p2pkh_format() {
+        const EXTERNAL_DESC: &str = "pkh(tprv8ZgxMBicQKsPfGXKjYNsw4gayjfBsq6FHxvNZ8LSBdz4DSTeBPd7cjvVQXTdMH9NJBVwNrNKLDr58dcrf4YmWLYBs4KogJhSgUELXuo1JwH/44'/1'/0'/0/*)";
+        const INTERNAL_DESC: &str = "pkh(tprv8ZgxMBicQKsPfGXKjYNsw4gayjfBsq6FHxvNZ8LSBdz4DSTeBPd7cjvVQXTdMH9NJBVwNrNKLDr58dcrf4YmWLYBs4KogJhSgUELXuo1JwH/44'/1'/0'/1/*)";
+
+        let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        // signing goes through Full Format
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -287,14 +321,12 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Simple;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -308,14 +340,12 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Simple;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -328,14 +358,12 @@ mod tests {
         );
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Simple;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -349,14 +377,12 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Full;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Full, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -370,14 +396,12 @@ mod tests {
         let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Full;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Full, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -390,14 +414,12 @@ mod tests {
         );
         let address = wallet.peek_address(KeychainKind::External, 0).address;
 
-        let signature_type = SignatureFormat::Full;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, None)
+            .sign_message("HELLO WORLD", SignatureFormat::Full, &address, None)
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -419,14 +441,17 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullProofOfFunds;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, Some(utxos))
+            .sign_message(
+                "HELLO WORLD",
+                SignatureFormat::FullProofOfFunds,
+                &address,
+                Some(utxos),
+            )
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -448,14 +473,17 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullProofOfFunds;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, Some(utxos))
+            .sign_message(
+                "HELLO WORLD",
+                SignatureFormat::FullProofOfFunds,
+                &address,
+                Some(utxos),
+            )
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -476,14 +504,17 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullProofOfFunds;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, Some(utxos))
+            .sign_message(
+                "HELLO WORLD",
+                SignatureFormat::FullProofOfFunds,
+                &address,
+                Some(utxos),
+            )
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid)
@@ -505,18 +536,62 @@ mod tests {
 
         assert!(!utxos.is_empty(), "No UTXOs found for address");
 
-        let signature_type = SignatureFormat::FullProofOfFunds;
-
         let sign = wallet
-            .sign_message("HELLO WORLD", signature_type, &address, Some(utxos))
+            .sign_message(
+                "HELLO WORLD",
+                SignatureFormat::FullProofOfFunds,
+                &address,
+                Some(utxos),
+            )
             .unwrap();
 
         let verify = wallet
-            .verify_message(&sign, "HELLO WORLD", signature_type, &address)
+            .verify_message(&sign, "HELLO WORLD", &address)
             .unwrap();
 
         assert!(verify.valid);
         assert_eq!(verify.proven_amount.unwrap(), Amount::from_sat(50000));
         assert_ne!(verify.proven_amount.unwrap(), Amount::from_sat(0))
+    }
+
+    #[test]
+    fn test_wrong_message_fails_verification() {
+        const EXTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/0/*)";
+        const INTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/1/*)";
+
+        let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        let sign = wallet
+            .sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None)
+            .unwrap();
+
+        // Verify with wrong message should fail
+        let verify = wallet.verify_message(&sign, "WRONG MESSAGE", &address);
+
+        if let Ok(result) = verify {
+            assert!(!result.valid)
+        }
+    }
+
+    #[test]
+    fn test_utxos_rejected_for_non_pof_format() {
+        const EXTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/0/*)";
+        const INTERNAL_DESC: &str = "wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/84'/1'/0'/1/*)";
+
+        let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        let utxos: Vec<_> = wallet.list_unspent().map(|utxo| utxo.outpoint).collect();
+
+        // Simple format with UTXOs should error
+        let result = wallet.sign_message(
+            "HELLO WORLD",
+            SignatureFormat::Simple,
+            &address,
+            Some(utxos),
+        );
+
+        assert!(result.is_err());
     }
 }
