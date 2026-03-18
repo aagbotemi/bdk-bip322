@@ -2,8 +2,8 @@
 //! according to the BIP-322 standard.
 
 use crate::{
-    BIP322, Error, MessageProof, MessageVerificationResult, SignatureFormat, derive_tx_params,
-    to_sign, to_spend, validate_witness, verify_psbt_proof, verify_signed_proof,
+    BIP322, Error, MessageProof, MessageVerificationResult, SignatureFormat, configure_p2sh_input,
+    derive_tx_params, to_sign, to_spend, validate_witness, verify_psbt_proof, verify_signed_proof,
 };
 use alloc::{string::ToString, vec::Vec};
 
@@ -190,19 +190,23 @@ fn configure_psbt_inputs(
             Some(PsbtSighashType::from(EcdsaSighashType::All))
         };
 
-        if input_spk.is_p2tr() || input_spk.is_p2wpkh() || input_spk.is_p2wsh() {
+        let descriptor = wallet.public_descriptor(keychain);
+        let derived_descriptor = descriptor
+            .at_derivation_index(derivation_index)
+            .map_err(|e| Error::InvalidFormat(e.to_string()))?;
+
+        if input_spk.is_p2tr() || input_spk.is_p2wpkh() {
+            psbt_input.witness_utxo = Some(txout);
+        } else if input_spk.is_p2wsh() {
             psbt_input.witness_utxo = Some(txout);
 
-            if input_spk.is_p2wsh() {
-                let desc = wallet.public_descriptor(keychain);
-                let derived = desc
-                    .at_derivation_index(derivation_index)
-                    .map_err(|e| Error::InvalidFormat(e.to_string()))?;
-                let script = derived
-                    .explicit_script()
-                    .map_err(|e| Error::InvalidFormat(e.to_string()))?;
-                psbt_input.witness_script = Some(script);
-            }
+            let script = derived_descriptor
+                .explicit_script()
+                .map_err(|e| Error::InvalidFormat(e.to_string()))?;
+            psbt_input.witness_script = Some(script);
+        } else if script_pubkey.is_p2sh() {
+            psbt_input.witness_utxo = Some(txout);
+            configure_p2sh_input(psbt_input, &derived_descriptor)?;
         } else if input_spk.is_p2pkh() {
             // P2PKH requires full transaction as non-witness UTXO
             if i == 0 {
@@ -250,6 +254,13 @@ fn encode_signature(
             "Legacy format is verify-only. Use Simple or Full for P2PKH addresses".to_string(),
         )),
         SignatureFormat::Simple => {
+            if script_pubkey.is_p2sh() {
+                return Err(Error::InvalidFormat(
+                    "Simple format is not supported for P2SH addresses. Use Full format."
+                        .to_string(),
+                ));
+            }
+
             let witness = psbt.inputs[0]
                 .final_script_witness
                 .as_ref()
@@ -294,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_p2pkh_format() {
+    fn test_simple_format_p2pkh() {
         const EXTERNAL_DESC: &str = "pkh(tprv8ZgxMBicQKsPfGXKjYNsw4gayjfBsq6FHxvNZ8LSBdz4DSTeBPd7cjvVQXTdMH9NJBVwNrNKLDr58dcrf4YmWLYBs4KogJhSgUELXuo1JwH/44'/1'/0'/0/*)";
         const INTERNAL_DESC: &str = "pkh(tprv8ZgxMBicQKsPfGXKjYNsw4gayjfBsq6FHxvNZ8LSBdz4DSTeBPd7cjvVQXTdMH9NJBVwNrNKLDr58dcrf4YmWLYBs4KogJhSgUELXuo1JwH/44'/1'/0'/1/*)";
 
@@ -552,6 +563,43 @@ mod tests {
         assert!(verify.valid);
         assert_eq!(verify.proven_amount.unwrap(), Amount::from_sat(50000));
         assert_ne!(verify.proven_amount.unwrap(), Amount::from_sat(0))
+    }
+
+    #[test]
+    fn test_simple_format_p2sh_p2wpkh() {
+        const EXTERNAL_DESC: &str = "sh(wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/49'/1'/0'/0/*))";
+        const INTERNAL_DESC: &str = "sh(wpkh(tprv8ZgxMBicQKsPdy6LMhUtFHAgpocR8GC6QmwMSFpZs7h6Eziw3SpThFfczTDh5rW2krkqffa11UpX3XkeTTB2FvzZKWXqPY54Y6Rq4AQ5R8L/49'/1'/0'/1/*))";
+
+        let (mut wallet, _) = get_funded_wallet(EXTERNAL_DESC, INTERNAL_DESC);
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        let sign = wallet
+            .sign_message("HELLO WORLD", SignatureFormat::Simple, &address, None)
+            .unwrap();
+
+        let verify = wallet
+            .verify_message(&sign, "HELLO WORLD", &address)
+            .unwrap();
+
+        assert!(verify.valid);
+    }
+
+    #[test]
+    fn test_full_format_p2sh_p2wsh() {
+        let (mut wallet, _) = get_funded_wallet_single(
+            "sh(wsh(pk(cVpPVruEDdmutPzisEsYvtST1usBR3ntr8pXSyt6D2YYqXRyPcFW)))",
+        );
+        let address = wallet.peek_address(KeychainKind::External, 0).address;
+
+        let sign = wallet
+            .sign_message("HELLO WORLD", SignatureFormat::Full, &address, None)
+            .unwrap();
+
+        let verify = wallet
+            .verify_message(&sign, "HELLO WORLD", &address)
+            .unwrap();
+
+        assert!(verify.valid);
     }
 
     #[test]
