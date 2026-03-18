@@ -135,56 +135,42 @@ pub fn verify_signed_proof(
                 proven_amount: None,
             })
         }
-        SignatureFormat::Full => {
+        SignatureFormat::Full | SignatureFormat::FullProofOfFunds => {
             let tx = Transaction::consensus_decode_from_finite_reader(&mut cursor)?;
-
             validate_to_sign(&tx, &to_spend)?;
 
-            let verification_result =
-                verify_message(wallet, address, &tx, to_spend, signature_type, &secp)?;
-
-            Ok(MessageVerificationResult {
-                valid: verification_result,
-                proven_amount: None,
-            })
-        }
-        SignatureFormat::FullProofOfFunds => {
-            let tx = Transaction::consensus_decode_from_finite_reader(&mut cursor)?;
-            // Validate transaction has proof-of-funds inputs
-            if tx.input.len() < 2 {
-                return Err(Error::InvalidFormat(
-                    "FullProofOfFunds requires at least 2 inputs".to_string(),
-                ));
-            }
-            validate_to_sign(&tx, &to_spend)?;
-
-            let mut total_amount = Amount::ZERO;
-
-            // Verify all additional inputs belong to the same address
-            for input in tx.input.iter().skip(1) {
-                let utxo = wallet
-                    .get_utxo(input.previous_output)
-                    .ok_or(Error::UtxoNotFound(input.previous_output))?;
-
-                if utxo.txout.script_pubkey != *script_pubkey {
+            // FullProofOfFunds — additional input validation and amount summation
+            let total_amount = if signature_type == SignatureFormat::FullProofOfFunds {
+                if tx.input.len() < 2 {
                     return Err(Error::InvalidFormat(
-                        "Additional input doesn't belong to the same address".to_string(),
+                        "FullProofOfFunds requires at least 2 inputs".to_string(),
                     ));
                 }
 
-                total_amount += utxo.txout.value;
-            }
+                let mut amount = Amount::ZERO;
+                for input in tx.input.iter().skip(1) {
+                    let utxo = wallet
+                        .get_utxo(input.previous_output)
+                        .ok_or(Error::UtxoNotFound(input.previous_output))?;
 
-            let verification_result =
-                verify_message(wallet, address, &tx, to_spend, signature_type, &secp)?;
+                    if utxo.txout.script_pubkey != script_pubkey {
+                        return Err(Error::InvalidFormat(
+                            "Additional input does not belong to the signing address".to_string(),
+                        ));
+                    }
+
+                    amount += utxo.txout.value;
+                }
+                Some(amount)
+            } else {
+                None
+            };
+
+            let valid = verify_message(wallet, address, &tx, to_spend, signature_type, &secp)?;
 
             Ok(MessageVerificationResult {
-                valid: verification_result,
-                proven_amount: if total_amount > Amount::ZERO {
-                    Some(total_amount)
-                } else {
-                    None
-                },
+                valid,
+                proven_amount: if valid { total_amount } else { None },
             })
         }
     }
