@@ -1,4 +1,4 @@
-# `bdk‑bip322`
+# `bdk_bip322`
 
 **Note:** This is an experimental crate exploring a descriptor-based implementation of BIP-322 within the Bitcoin Dev Kit (BDK) ecosystem.
 
@@ -7,6 +7,17 @@ A Rust library implementing the [BIP‑322: Generic Signed Message Format](https
 `bdk-bip322` enables cryptographic proof of control over Bitcoin addresses and
 funds without moving coins or broadcasting transactions, while securely
 committing to arbitrary messages.
+
+## License
+
+Licensed under either of
+
+ * Apache License, Version 2.0
+   ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license
+   ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
 
 ## Overview
 BIP-322 defines a standardized, script-agnostic mechanism for signing and

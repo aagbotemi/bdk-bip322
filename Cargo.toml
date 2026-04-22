@@ -1,8 +1,15 @@
 [package]
-name = "bdk-bip322"
+name = "bdk_bip322"
 version = "0.1.0"
+homepage = "https://bitcoindevkit.org"
+repository = "https://github.com/bitcoindevkit/bdk-bip322"
+documentation = "https://docs.rs/bdk_bip322"
+description = "BIP-322 Generic Signed Message Format implementation for BDK"
+keywords = ["bitcoin", "wallet", "bip322", "signing"]
+license = "MIT OR Apache-2.0"
 edition = "2024"
 rust-version = "1.85.0"
+readme = "README.md"
 
 [dependencies]
 bitcoin = { version = "0.32.6", default-features = false }
